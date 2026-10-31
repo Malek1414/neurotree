@@ -1,5 +1,6 @@
 //! Neurotree desktop shell: one window with the viewer, closing it only hides it.
 
+mod claude_tail;
 mod events;
 mod paths;
 
