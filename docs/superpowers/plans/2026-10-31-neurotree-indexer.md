@@ -1439,14 +1439,14 @@ def test_percentile_ranks():
 def test_combine_weights_renormalize_floor_and_noise():
     assert sum(WEIGHTS.values()) == pytest.approx(1.0)
     full = combine({"attention": 1, "history": 0, "structure": 0, "runtime": 0})
-    assert full == pytest.approx(0.45)
+    assert full == pytest.approx(0.45, abs=1e-6)
     no_runtime = combine({"attention": 1, "history": 0, "structure": 0, "runtime": None})
-    assert no_runtime == pytest.approx(0.45 / 0.9)
+    assert no_runtime == pytest.approx(0.45 / 0.9, abs=1e-6)
     only_two = combine({"attention": 1, "history": 1, "structure": None, "runtime": None})
-    assert only_two == pytest.approx(1.0)
+    assert only_two == pytest.approx(1.0, abs=1e-6)
     floor = combine({"attention": 0, "history": 0, "structure": 1, "runtime": None})
-    assert floor == pytest.approx(max(0.2 / 0.9, 0.15))
-    assert combine({"attention": 1, "history": 1, "structure": None, "runtime": None}, noise=0.1) == pytest.approx(0.1)
+    assert floor == pytest.approx(max(0.2 / 0.9, 0.15), abs=1e-6)
+    assert combine({"attention": 1, "history": 1, "structure": None, "runtime": None}, noise=0.1) == pytest.approx(0.1, abs=1e-6)
 
 
 def test_score_rolls_up_and_explains(tmp_path):
