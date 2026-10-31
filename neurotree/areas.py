@@ -42,15 +42,16 @@ def _share(g: nx.Graph, node: str, members: set) -> float:
     return inside / total if total else 0.0
 
 
-def _name(store, members: set, g: nx.Graph, taken: set) -> str:
-    """A word shared by at least two project names, else the most attended project's name; never a name in use."""
+def _name(store, members: set, attention: Counter, taken: set) -> str:
+    """A word shared by at least 40 % of the project names (min. 2), else the most attended project's name;
+    never a name that is already in use."""
     words = Counter()
     for pid in members:
         words.update({w.lower() for w in re.findall(r"[A-Za-z]{4,}", store.node(pid)["label"])} - STOP)
     for w, c in words.most_common():
-        if c >= 2 and w.capitalize() not in taken:
+        if c >= max(2, 0.4 * len(members)) and w.capitalize() not in taken:
             return w.capitalize()
-    top = max(sorted(members), key=lambda p: g.degree(p, weight="weight"))
+    top = max(sorted(members), key=lambda p: attention.get(p, 0.0))
     name = store.node(top)["label"]
     return name if name not in taken else f"{name} +{len(members) - 1}"
 
@@ -63,8 +64,19 @@ def _slug(name: str, taken) -> str:
     return slug
 
 
+def project_attention(store) -> Counter:
+    project_of = {n["id"]: (n["id"] if n["kind"] == "project" else n["project"]) for n in store.nodes()}
+    out = Counter()
+    for e in store.events(("claude_sessions", "claude_mem")):
+        p = project_of.get(e["item"])
+        if p:
+            out[p] += e["weight"]
+    return out
+
+
 def assign_areas(store, areas_path, owner: str = "Malek") -> dict:
     g = coattention(store)
+    attention = project_attention(store)
     areas_path = Path(areas_path)
     saved = json.loads(areas_path.read_text()) if areas_path.exists() else {}
     reviewed = bool(saved.get("reviewed"))
@@ -93,11 +105,20 @@ def assign_areas(store, areas_path, owner: str = "Malek") -> dict:
             members = {p for p in community if _share(free, p, community) >= MIN_CONFIDENCE}
             if len(members) < 2:
                 continue
-            name = _name(store, members, free, {a["name"] for a in areas.values()})
+            name = _name(store, members, attention, {a["name"] for a in areas.values()})
             slug = _slug(name, areas)
             areas[slug] = {"name": name, "color": None, "projects": sorted(members)}
             for p in members:
                 assignment[p] = slug
+    attended = sorted(v for p, v in attention.items() if v > 0 and g.has_node(p))
+    heavy = attended[int(0.75 * (len(attended) - 1))] if attended else float("inf")
+    for p in sorted(n for n in g.nodes if n not in assignment):  # a heavily worked-on solo project is an area itself
+        if attention.get(p, 0) >= heavy and attention.get(p, 0) > 0:
+            name = store.node(p)["label"]
+            slug = _slug(name, areas)
+            areas[slug] = {"name": name if name not in {a["name"] for a in areas.values()} else f"{name} ({slug})",
+                           "color": None, "projects": [p]}
+            assignment[p] = slug
     by_folder = defaultdict(Counter)  # folders only break ties for projects that attention could not place
     for p, slug in assignment.items():
         path = store.node(p)["path"]

@@ -78,3 +78,19 @@ def test_names_are_unique_and_folders_break_ties(tmp_path):
     assert len(names) == len(set(names)) == 2 and "Hack" in names
     area_of = {p: slug for slug, a in saved.items() for p in a["projects"]}
     assert area_of["project:solo"] == area_of["project:hack-one"] != UNSORTED
+
+
+def test_heavy_solo_project_becomes_its_own_area(tmp_path):
+    s = Store(tmp_path / "g.db")
+    for p in ("big", "quiet", "pair-a", "pair-b"):
+        s.upsert_node(f"project:{p}", "project", 2, p, path=f"/{'E' if p == 'quiet' else 'D'}/{p}")
+    rows = [("project:big", 1.0, "edit", 3.0, "claude_sessions", f"b{i}") for i in range(40)]
+    rows += [("project:quiet", 1.0, "read", 1.0, "claude_sessions", "q0")]
+    rows += [(f"project:pair-{x}", 1.0, "edit", 3.0, "claude_sessions", f"p{i}") for i in range(3) for x in "ab"]
+    s.add_events(rows)
+    assign_areas(s, tmp_path / "areas.json")
+    saved = json.loads((tmp_path / "areas.json").read_text())["areas"]
+    area_of = {p: slug for slug, a in saved.items() for p in a["projects"]}
+    assert saved[area_of["project:big"]]["name"] == "big" and saved[area_of["project:big"]]["projects"] == ["project:big"]
+    assert area_of["project:quiet"] == UNSORTED
+    assert saved[area_of["project:pair-a"]]["name"] == "Pair"
