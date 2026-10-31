@@ -1,0 +1,26 @@
+{
+  "name": "neurotree-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "fixture": "node scripts/make-fixture.mjs fixtures/graph.json 60 6 3 && node scripts/make-fixture.mjs fixtures/big.json 20000 240 9"
+  },
+  "dependencies": {
+    "3d-force-graph": "^1.80.1",
+    "@tauri-apps/api": "^2.12.4",
+    "d3-force-3d": "^3.0.6",
+    "three": "^0.187.0",
+    "three-spritetext": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "~5.9.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

@@ -11,3 +11,4 @@ target/
 graph.json
 !viewer/fixtures/graph.json
 .claude/
+viewer/fixtures/big.json
