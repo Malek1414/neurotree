@@ -693,7 +693,9 @@ def index_repo(store, repo: Path, since_days: int, extra=(), now: float | None =
         if now - mtime <= since_days * 86400:
             events.append((fid, mtime, "modified", 0.5, "fs", None))
     ts = None
-    for line in git(repo, "log", f"--since={since_days}.days", "--numstat", "--format=@%ct", timeout=180).splitlines():
+    log = git(repo, "log", f"--since={since_days}.days", "--max-count=3000", "--no-renames", "--numstat", "--format=@%ct",
+                     timeout=180)
+    for line in log.splitlines():
         if line.startswith("@"):
             ts = float(line[1:])
             continue

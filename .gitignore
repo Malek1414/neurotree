@@ -10,3 +10,4 @@ target/
 *.db-*
 graph.json
 !viewer/fixtures/graph.json
+.claude/
