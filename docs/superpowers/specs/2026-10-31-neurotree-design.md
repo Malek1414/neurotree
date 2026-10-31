@@ -14,15 +14,15 @@
 | Build | **Desktop app**: Tauri 2 shell, Python indexer sidecar, SQLite store, web viewer (three.js + 3d-force-graph). Electron is the fallback if the WebKit performance gate fails. |
 
 ## 1. Architecture
-- **Shell (Rust, Tauri 2):** main window with the tree, menubar icon (index status, Reindex, Open). Starts and supervises the indexer; watches source folders (`notify`, 2 s debounce) and asks for incremental reindex; exposes commands to the viewer: `open_path`, `reveal_in_finder`, `reindex`, `status`.
-- **Indexer (Python 3.12+, package `neurotree`):** source adapters -> store -> scoring -> areas -> export. CLI: `python -m neurotree index|score|areas|export|all`. Read-only towards every source. v1 runs from the repo's own `.venv` (no bundled Python); the shell finds it via `NEUROTREE_PYTHON` or `<repo>/.venv/bin/python`.
+- **Shell (Rust, Tauri 2):** main window with the tree, menubar icon (index status, Reindex, Open). Starts and supervises the indexer; watches source folders (`notify`, 2 s debounce): a change fires its node in the viewer immediately, and a full reindex runs at most every 10 minutes to place new nodes; exposes commands to the viewer: `open_path`, `reveal_in_finder`, `reindex`, `status`.
+- **Indexer (Python 3.12+, package `neurotree`):** source adapters -> store -> scoring -> areas -> export. CLI: `python -m neurotree all`. Read-only towards every source. v1 runs from the repo's own `.venv` (no bundled Python); the shell finds it via `NEUROTREE_PYTHON` or `<repo>/.venv/bin/python`.
 - **Store:** `~/Library/Application Support/Neurotree/graph.db` (SQLite, WAL). Tables: `nodes`, `edges`, `events`, `scores`, `meta`. Nothing leaves the Mac.
 - **Viewer (TypeScript, Vite):** loads `graph.json` (exported view of the store), renders the 3D tree. Same package later builds the site embed (stage 5).
 
 ## 2. Data model and scoring
 **Levels (center outward):** 0 `self` (Malek) -> 1 `area` -> 2 `project` -> 3 `file` -> 4 `detail` (functions; memory facts), level 4 loaded on demand.
 - Project = one repo (local clone and GitHub copy merged by normalized remote URL) or one meaningful Documents/Desktop folder. GitHub-only repos are project nodes without files.
-- File = code module or document (md, txt, pdf, docx, pptx, key, pages, xlsx, csv, ipynb). Skipped: `.git`, `node_modules`, `.venv`, build/dist, caches, binaries, media over 50 MB.
+- File = code module (incl. json/yaml/toml config) or document (md, txt, pdf, docx, pptx, pages, xlsx, csv, rtf). `.key` is treated as a possible private key, so Keynote decks are skipped. Skipped: `.git`, `node_modules`, `.venv`, build/dist, caches, binaries, media over 50 MB.
 **Edges:** `tree` (parent-child); arcs: `import` (module -> module), `co_attention` (touched in the same Claude session; weight = shared sessions), `mention` (md/txt file names a repo or file), `shared_code` (same file content hash in two projects).
 **Events** (`item, ts, kind, weight, source`): Claude session file `read` 1, `edit`/`write` 3, path `mention` in a Bash command 0.5; claude-mem `files_read` 1, `files_modified` 3; git `commit` (weight log2(1+lines changed)); file `modified` (mtime) 0.5.
 **Signals per node:**
@@ -30,9 +30,9 @@
 - history = sum(commit weight * 0.5^(age/90 d)) + file mtime events.
 - structure = PageRank inside the project's import graph (Python via AST, JS/TS via import/require parsing); other languages: no signal.
 - runtime = share of time from a repograph `trace.json` if the project has one.
-**Score:** each signal -> percentile rank among nodes of the same level; missing signals drop out and the remaining weights are renormalized; importance = weighted sum * noise factor (lockfiles, generated, vendored, fixtures, minified: 0.1; tests: 0.5); structure keeps a floor of 0.15 of its weight so essential but untouched code never goes fully dark. Parents aggregate children (max * 0.6 + mean * 0.4).
+**Score:** each signal -> percentile rank among nodes of the same level; missing signals drop out and the remaining weights are renormalized; importance = weighted sum * noise factor (lockfiles, generated, vendored, fixtures, minified: 0.1; tests: 0.5); structure keeps a floor of 0.15 of its weight so essential but untouched code never goes fully dark. Parents roll up their children's raw attention and history, then are ranked within their own level.
 **Breakdown:** each node stores `{attention, history, structure, runtime, noise, importance}` plus top evidence lines (e.g. "38 Claude touches in 30 d, 12 commits, imported by 9 modules").
-**Areas:** project co-attention graph (shared sessions + shared memory projects) -> Louvain communities (networkx) -> names from the most frequent folder/README keywords -> `areas.json` (`{area: {name, color, projects[]}}`, Malek-editable). Membership confidence < 0.4 -> "Unsorted".
+**Areas:** project co-attention graph (shared sessions + shared memory projects) -> Louvain communities (networkx) -> names from the most frequent folder/README keywords -> `areas.json` (`{reviewed, areas: {slug: {name, color, projects[]}}}`); it stays a fresh proposal on every run until Malek reviews it, then his placement wins and new projects join the area holding most of their attention. Membership confidence < 0.4 -> "Unsorted".
 **Labels:** first line of README / module docstring / document title. Claude-written labels come in stage 3.
 
 ## 3. Viewer and interactions

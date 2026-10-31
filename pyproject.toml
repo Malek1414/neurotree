@@ -1,0 +1,13 @@
+[project]
+name = "neurotree"
+version = "0.1.0"
+description = "A 3D attention tree of everything on this Mac"
+requires-python = ">=3.12"
+dependencies = ["networkx>=3.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
