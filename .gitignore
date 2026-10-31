@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+target/
+.DS_Store
+# personal data never goes into git
+*.db
+*.db-*
+graph.json
+!viewer/fixtures/graph.json
