@@ -1,0 +1,24 @@
+[package]
+name = "neurotree"
+version = "0.1.0"
+description = "Neurotree desktop shell: window, menubar, indexer supervisor, live file watcher"
+authors = ["Malek Hassan"]
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "neurotree_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
