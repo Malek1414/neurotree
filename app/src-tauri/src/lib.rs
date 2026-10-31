@@ -1,15 +1,39 @@
 //! Neurotree desktop shell: one window with the viewer, closing it only hides it.
 
 mod claude_tail;
+mod commands;
 mod events;
 mod indexer;
 mod paths;
 mod watcher;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+
+use crate::commands::AppState;
+use crate::events::IndexStatus;
+use crate::indexer::Indexer;
+
+/// Where index runs report to: the `index-status` event for the viewer.
+pub(crate) fn status_sink(app: &AppHandle) -> impl Fn(IndexStatus) + Clone + Send + 'static {
+    let app = app.clone();
+    move |s: IndexStatus| {
+        let _ = app.emit(events::INDEX_STATUS, &s);
+    }
+}
 
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            commands::load_graph,
+            commands::status,
+            commands::open_path,
+            commands::reveal_path,
+            commands::reindex
+        ])
+        .setup(|app| {
+            app.manage(AppState { data_dir: paths::data_dir(), indexer: Indexer::new(indexer::command_from_env()) });
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
