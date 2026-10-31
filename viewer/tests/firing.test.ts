@@ -24,12 +24,12 @@ describe('firing', () => {
     expect(r.step(1000)).toEqual([])  // not playing yet
     r.playing = true
     const first = r.step(5000)
-    expect(first.map((e) => e[0])).toEqual(['n0', 'n1', 'n2', 'n3', 'n4', 'n5'])
+    expect(first.map((e) => e[0])).toEqual(['n0', 'n1', 'n2', 'n3', 'n4'])  // half of 9 days = 4.5 days
     expect(r.progress()).toBeCloseTo(0.5)
-    expect(r.step(5000).map((e) => e[0])).toEqual(['n6', 'n7', 'n8', 'n9'])
+    expect(r.step(5000).map((e) => e[0])).toEqual(['n5', 'n6', 'n7', 'n8', 'n9'])
     expect(r.playing).toBe(false)
     r.seek(0.25)
     r.playing = true
-    expect(r.step(1)[0]?.[0]).toBe('n3')
+    expect(r.step(1000)[0]?.[0]).toBe('n3')  // 2.25 days + 0.9 days passes n3
   })
 })
