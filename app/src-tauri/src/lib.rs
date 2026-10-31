@@ -2,6 +2,7 @@
 
 mod claude_tail;
 mod events;
+mod indexer;
 mod paths;
 mod watcher;
 
