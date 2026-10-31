@@ -1,5 +1,6 @@
 //! Neurotree desktop shell: one window with the viewer, closing it only hides it.
 
+mod events;
 mod paths;
 
 use tauri::{Manager, WindowEvent};
