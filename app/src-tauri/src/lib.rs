@@ -1,23 +1,68 @@
-//! Neurotree desktop shell: one window with the viewer, closing it only hides it.
+//! Neurotree desktop shell: the viewer window (closing only hides it), a menubar icon, the indexer
+//! supervisor and the live watcher that fires `fs-change` events into the viewer.
 
 mod claude_tail;
 mod commands;
 mod events;
 mod indexer;
 mod paths;
+mod tray;
 mod watcher;
+
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 use crate::commands::AppState;
-use crate::events::IndexStatus;
+use crate::events::{Change, IndexStatus, Source};
 use crate::indexer::Indexer;
 
-/// Where index runs report to: the `index-status` event for the viewer.
+/// Keeps the FSEvents stream alive for the life of the app.
+struct LiveWatcher(#[allow(dead_code)] Mutex<notify::RecommendedWatcher>);
+
+/// Where index runs report to: the `index-status` event for the viewer, then the menubar line.
 pub(crate) fn status_sink(app: &AppHandle) -> impl Fn(IndexStatus) + Clone + Send + 'static {
     let app = app.clone();
     move |s: IndexStatus| {
         let _ = app.emit(events::INDEX_STATUS, &s);
+        tray::refresh(&app);
+    }
+}
+
+/// Watcher -> (Claude tail) -> batcher -> `fs-change`; every change also marks the index dirty.
+fn start_live(app: &AppHandle, home: &Path, indexer: &Indexer) {
+    let emitter = app.clone();
+    let changes = events::spawn_batcher(events::WINDOW, events::SETTLE, move |batch| {
+        let _ = emitter.emit(events::FS_CHANGE, &batch);
+    });
+    let claude_root = paths::claude_projects(home);
+    let to_batcher = changes.clone();
+    let logs = claude_tail::spawn(claude_root.clone(), home.to_path_buf(), move |paths| {
+        for path in paths {
+            let _ = to_batcher.send(Change { source: Source::Claude, path });
+        }
+    });
+    let (ix_fs, ix_log) = (indexer.clone(), indexer.clone());
+    let watcher = watcher::start(
+        &paths::watch_roots(home),
+        home.to_path_buf(),
+        claude_root,
+        move |p| {
+            ix_fs.mark_dirty();
+            let _ = changes.send(Change { source: Source::Fs, path: p.to_string_lossy().into_owned() });
+        },
+        move |p| {
+            ix_log.mark_dirty();
+            let _ = logs.send(p);
+        },
+    );
+    match watcher {
+        Ok(w) => {
+            app.manage(LiveWatcher(Mutex::new(w)));
+        }
+        Err(e) => eprintln!("[neurotree] live watcher unavailable: {e}"),
     }
 }
 
@@ -31,7 +76,20 @@ pub fn run() {
             commands::reindex
         ])
         .setup(|app| {
-            app.manage(AppState { data_dir: paths::data_dir(), indexer: Indexer::new(indexer::command_from_env()) });
+            let handle = app.handle().clone();
+            let home = paths::home_dir();
+            let data_dir = paths::data_dir();
+            let indexer = Indexer::new(indexer::command_from_env());
+            let cmd = indexer.command();
+            eprintln!("[neurotree] data {}, indexer {} in {}", data_dir.display(), cmd.program.display(), cmd.cwd.display());
+            app.manage(AppState { data_dir: data_dir.clone(), indexer: indexer.clone() });
+            tray::create(&handle)?;
+            start_live(&handle, &home, &indexer);
+            let sink = status_sink(&handle);
+            indexer::spawn_scheduler(indexer.clone(), Duration::from_secs(30), sink.clone());
+            if indexer::needs_startup_index(&data_dir.join("graph.json"), SystemTime::now()) {
+                indexer.start(sink);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -45,10 +103,7 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                tray::show_main(app);
             }
         });
 }
