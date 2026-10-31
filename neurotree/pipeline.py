@@ -2,6 +2,7 @@
 status.json, the rest still runs) and the new database replaces the old one only when it is complete."""
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import time
@@ -25,9 +26,16 @@ def run_all(settings: Settings | None = None, home=None, now: float | None = Non
     settings = settings or load_settings()
     home = Path(home) if home else data_dir()
     home.mkdir(parents=True, exist_ok=True)
-    building = home / "graph.db.building"
-    for stale in (building, Path(f"{building}-wal"), Path(f"{building}-shm")):
+    lock = open(home / ".index.lock", "w")
+    try:  # one index run at a time: a second run would otherwise clean up the first run's temp database
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        log("[neurotree] another index run is in progress, skipped")
+        return {"skipped": {"ok": 0, "reason": "another index run is in progress"}}
+    for stale in home.glob("graph.db.building*"):  # leftovers of a crashed run (safe: we hold the lock)
         stale.unlink(missing_ok=True)
+    building = home / f"graph.db.building-{os.getpid()}"
     store = Store(building, wal=False)
     extra, on = tuple(settings.exclude), settings.sources
     status, repos = {}, []
@@ -75,4 +83,5 @@ def run_all(settings: Settings | None = None, home=None, now: float | None = Non
     for stale in (home / "graph.db-wal", home / "graph.db-shm"):
         stale.unlink(missing_ok=True)
     (home / "status.json").write_text(json.dumps({"finished_at": time.time(), "steps": status}, indent=1))
+    lock.close()
     return status

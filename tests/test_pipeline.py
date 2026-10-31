@@ -23,7 +23,7 @@ def test_full_run_on_fixture_world(world):
     alpha, beta = (next(n for n in data["nodes"] if n["id"] == i) for i in (f"project:dir:{a}", "project:gh:malek1414/beta"))
     assert alpha["parent"] == beta["parent"] != "area:unsorted"
     assert (world["home"] / "status.json").exists() and (world["home"] / "graph.db").exists()
-    assert not (world["home"] / "graph.db.building").exists()
+    assert not list(world["home"].glob("graph.db.building*"))
 
 
 def test_secrets_and_prompts_never_touched(world, monkeypatch):
@@ -41,6 +41,15 @@ def test_secrets_and_prompts_never_touched(world, monkeypatch):
     assert not [p for p in opened if p.endswith((".env", "credentials.json", "secret-plan.md"))]
     raw = (world["home"] / "graph.db").read_bytes() + (world["home"] / "graph.json").read_bytes()
     assert b"TOP-SECRET-PROMPT-TEXT" not in raw and b"never read me" not in raw
+
+
+def test_only_one_run_at_a_time(world):
+    import fcntl
+    world["home"].mkdir(parents=True)
+    with open(world["home"] / ".index.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        status = run_all(world["settings"], home=world["home"], now=world["now"], log=lambda *_: None)
+    assert "skipped" in status and not (world["home"] / "graph.json").exists()
 
 
 def test_broken_source_is_isolated(world):
