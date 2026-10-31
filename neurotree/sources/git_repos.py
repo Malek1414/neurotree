@@ -70,6 +70,25 @@ def project_id(repo: Path) -> tuple[str, str]:
     return (f"project:{key}" if key else f"project:dir:{repo}"), remote
 
 
+def head_time(repo: Path) -> float:
+    out = git(repo, "log", "-1", "--format=%ct").strip()
+    return float(out) if out else 0.0
+
+
+def pick_clones(repos: list[Path]) -> tuple[list[Path], dict[Path, list[Path]]]:
+    """Several local clones of one GitHub repo -> index only the one with the newest commit; the others become
+    aliases, so their paths still count for the project without duplicating its files."""
+    by_project = defaultdict(list)
+    for r in repos:
+        by_project[project_id(r)[0]].append(r)
+    canonical, clones = [], {}
+    for rs in by_project.values():
+        best = max(rs, key=lambda r: (head_time(r), -len(str(r))))
+        canonical.append(best)
+        clones[best] = sorted(r for r in rs if r != best)
+    return sorted(canonical), clones
+
+
 def index_repo(store, repo: Path, since_days: int, extra=(), now: float | None = None) -> dict:
     now = now or time.time()
     repo = Path(repo)

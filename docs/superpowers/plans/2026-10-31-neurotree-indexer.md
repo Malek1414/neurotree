@@ -2090,3 +2090,13 @@ if __name__ == "__main__":
 - [ ] **Step 2:** Check: every step without `error`; counts plausible (repos ≈ 118 local, sessions ≈ 963 with few errors, memory ≈ 27,868 observations); the top 10 files by importance are things Malek actually worked on recently (Arvantir, Neurotree, morgana…), and no path in graph.json matches a secret pattern:
   `.venv/bin/python - <<'EOF'` script that loads graph.json, prints the top 10 projects and files with evidence, and asserts no node path contains `/.ssh/`, `.env`, `id_rsa`, `credential`, `secret`.
 - [ ] **Step 3:** Record timings in `docs/superpowers/plans/2026-10-31-neurotree-indexer.md` (this section) and commit code only (no data).
+
+---
+
+### Task 10: Fixes from the first real run (31 Oct 2026, 74 s, 63,009 nodes)
+
+Found on real data, each fixed test-first (tests in `test_privacy.py`, `test_git.py`, `test_areas.py`):
+- **Second clones** (`~/Desktop/Projects/readme-upgrade/*` holds second clones with the same GitHub remote) merged two file sets into one project. Now `pick_clones()` indexes only the clone with the newest commit; the others are stored as `aliases` (meta) and `clones` (project meta), and `PathIndex.translate()` maps their paths onto the indexed clone.
+- **Secret-looking folders** (`secrets-store/`) slipped through because only file names were checked. `is_excluded()` now checks every path component.
+- **Area names** repeated ("Upgrade" x3, from a parent folder name). Names now come from project labels only and are unique; folders only break ties for projects attention could not place (>= 2 siblings, >= 60 % in one area).
+- Also: git history capped at 3,000 commits per repo with rename detection off (McCODZ: 5,589 commits/year), and a run lock + per-run temp database (a second run deleted the first run's temp file: "disk I/O error").

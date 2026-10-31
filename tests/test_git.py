@@ -50,3 +50,26 @@ def test_shared_code(tmp_path):
     n = shared_code_edges(s, {"file:/a/util.py": "abc", "file:/b/util.py": "abc",
                               "file:/a/LICENSE.md": "lic", "file:/b/LICENSE.md": "lic"})
     assert n == 1 and s.edges("shared_code")[0]["weight"] == 1.0
+
+
+def test_second_clone_is_an_alias_not_a_duplicate(world, tmp_path):
+    import shutil
+    import subprocess
+    from neurotree.paths import PathIndex
+    from neurotree.pipeline import run_all
+    copy = world["root"] / "Desktop" / "copies" / "beta"
+    shutil.copytree(world["beta"], copy)
+    env = {"GIT_AUTHOR_DATE": "@1700000000 +0000", "GIT_COMMITTER_DATE": "@1700000000 +0000"}
+    subprocess.run(["git", "-C", str(copy), "reset", "-q", "--hard"], check=True)
+    # make the copy's history older than the original's
+    subprocess.run(["git", "-C", str(copy), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend",
+                    "--no-edit", "--date=@1700000000"], check=True, env={**__import__("os").environ, **env})
+    run_all(world["settings"], home=world["home"], now=world["now"], log=lambda *_: None)
+    from neurotree.store import Store
+    s = Store(world["home"] / "graph.db")
+    beta = s.node("project:gh:malek1414/beta")
+    assert beta["path"] == str(world["beta"]) and beta["meta"]["clones"] == [str(copy)]
+    assert [n["path"] for n in s.nodes("file") if n["project"] == "project:gh:malek1414/beta"] == [str(world["beta"] / "main.py")]
+    idx = PathIndex(s)
+    assert idx.resolve(str(copy / "main.py")) == "file:" + str(world["beta"] / "main.py")
+    assert idx.project_of(str(copy / "x")) == "project:gh:malek1414/beta"

@@ -56,3 +56,25 @@ def _store_fresh(tmp_path):
     sub = tmp_path / "second"
     sub.mkdir()
     return _store(sub)
+
+
+def test_names_are_unique_and_folders_break_ties(tmp_path):
+    s = Store(tmp_path / "g.db")
+    groups = {"hack-one": "/D/a", "hack-two": "/D/a", "hack-three": "/D/b", "hack-four": "/D/b", "solo": "/D/a"}
+    for p, folder in groups.items():
+        s.upsert_node(f"project:{p}", "project", 2, p, path=f"{folder}/{p}")
+    rows = []
+    for i in range(3):
+        rows += [("project:hack-one", 1.0, "session", 2.0, "claude_sessions", f"x{i}"),
+                 ("project:hack-two", 1.0, "session", 2.0, "claude_sessions", f"x{i}"),
+                 ("project:hack-three", 1.0, "session", 2.0, "claude_sessions", f"y{i}"),
+                 ("project:hack-four", 1.0, "session", 2.0, "claude_sessions", f"y{i}")]
+    rows.append(("project:solo", 1.0, "session", 2.0, "claude_sessions", "z"))
+    s.add_events(rows)
+    saved = None
+    assign_areas(s, tmp_path / "areas.json")
+    saved = json.loads((tmp_path / "areas.json").read_text())["areas"]
+    names = [a["name"] for slug, a in saved.items() if slug != UNSORTED]
+    assert len(names) == len(set(names)) == 2 and "Hack" in names
+    area_of = {p: slug for slug, a in saved.items() for p in a["projects"]}
+    assert area_of["project:solo"] == area_of["project:hack-one"] != UNSORTED

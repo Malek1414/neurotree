@@ -42,17 +42,17 @@ def _share(g: nx.Graph, node: str, members: set) -> float:
     return inside / total if total else 0.0
 
 
-def _name(store, members: set, g: nx.Graph) -> str:
+def _name(store, members: set, g: nx.Graph, taken: set) -> str:
+    """A word shared by at least two project names, else the most attended project's name; never a name in use."""
     words = Counter()
     for pid in members:
-        n = store.node(pid)
-        texts = [n["label"], Path(n["path"]).parent.name if n["path"] else ""]
-        words.update({w.lower() for t in texts for w in re.findall(r"[A-Za-z]{4,}", t)} - STOP)
-    common = [w for w, c in words.most_common() if c >= 2]
-    if common:
-        return common[0].capitalize()
+        words.update({w.lower() for w in re.findall(r"[A-Za-z]{4,}", store.node(pid)["label"])} - STOP)
+    for w, c in words.most_common():
+        if c >= 2 and w.capitalize() not in taken:
+            return w.capitalize()
     top = max(sorted(members), key=lambda p: g.degree(p, weight="weight"))
-    return store.node(top)["label"]
+    name = store.node(top)["label"]
+    return name if name not in taken else f"{name} +{len(members) - 1}"
 
 
 def _slug(name: str, taken) -> str:
@@ -93,11 +93,24 @@ def assign_areas(store, areas_path, owner: str = "Malek") -> dict:
             members = {p for p in community if _share(free, p, community) >= MIN_CONFIDENCE}
             if len(members) < 2:
                 continue
-            name = _name(store, members, free)
+            name = _name(store, members, free, {a["name"] for a in areas.values()})
             slug = _slug(name, areas)
             areas[slug] = {"name": name, "color": None, "projects": sorted(members)}
             for p in members:
                 assignment[p] = slug
+    by_folder = defaultdict(Counter)  # folders only break ties for projects that attention could not place
+    for p, slug in assignment.items():
+        path = store.node(p)["path"]
+        if path:
+            by_folder[str(Path(path).parent)][slug] += 1
+    for p in sorted(n for n in g.nodes if n not in assignment):
+        path = store.node(p)["path"]
+        votes = by_folder.get(str(Path(path).parent)) if path else None
+        if votes:
+            slug, k = votes.most_common(1)[0]
+            if k >= 2 and k / sum(votes.values()) >= 0.6:
+                assignment[p] = slug
+                areas[slug]["projects"].append(p)
     areas[UNSORTED] = {"name": "Unsorted", "color": "#6b7280",
                        "projects": sorted(p for p in g.nodes if p not in assignment)}
     used = {a["color"] for a in areas.values() if a["color"]}

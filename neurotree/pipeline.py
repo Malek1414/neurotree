@@ -16,7 +16,7 @@ from .scoring import score
 from .sources.claude_mem import index_memory
 from .sources.claude_sessions import index_sessions
 from .sources.files import index_files
-from .sources.git_repos import find_repos, index_repo, shared_code_edges
+from .sources.git_repos import find_repos, index_repo, pick_clones, shared_code_edges
 from .sources.github import index_github
 from .store import Store
 from .structure import add_structure
@@ -53,13 +53,18 @@ def run_all(settings: Settings | None = None, home=None, now: float | None = Non
 
     def git_step():
         repos.extend(find_repos(settings.repo_roots, extra=extra))
+        canonical, clones = pick_clones(repos)
+        aliases = [[str(c), str(best)] for best, cs in clones.items() for c in cs]
+        store.set_meta("aliases", aliases)
         blobs, files, imports, functions = {}, 0, 0, 0
-        for repo in repos:
+        for repo in canonical:
             info = index_repo(store, repo, settings.history_days, extra, now)
+            if clones.get(repo):
+                store.upsert_node(info["project"], "project", 2, repo.name, clones=[str(c) for c in clones[repo]])
             st = add_structure(store, repo, info["kept"])
             files, imports, functions = files + info["files"], imports + st["imports"], functions + st["functions"]
             blobs.update(info["blobs"])
-        return {"ok": len(repos), "files": files, "imports": imports, "functions": functions,
+        return {"ok": len(canonical), "clones": len(aliases), "files": files, "imports": imports, "functions": functions,
                 "shared_code": shared_code_edges(store, blobs)}
 
     if on.get("git", True):

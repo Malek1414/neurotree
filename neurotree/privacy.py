@@ -25,7 +25,7 @@ def is_excluded(path, extra=()) -> bool:
     for d in NEVER_DIRS:
         if p == d or d in p.parents:
             return True
-    if is_secret_name(p.name) or any(part in SKIP_DIRS for part in p.parts):
+    if any(is_secret_name(part) or part in SKIP_DIRS for part in p.parts):  # folders named like secrets too
         return True
     s = str(p)
     for pattern in extra:

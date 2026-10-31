@@ -35,3 +35,9 @@ def test_classify_and_noise():
     assert noise_factor("tests/test_core.py") == 0.5
     assert noise_factor("src/app.test.ts") == 0.5
     assert noise_factor("pkg/core.py") == 1.0
+
+
+def test_secret_folders_are_excluded_too():
+    assert is_excluded("/repo/references/secrets-store/README.md")
+    assert is_excluded("/repo/aws-credentials/notes.md")
+    assert not is_excluded("/repo/references/store/README.md")

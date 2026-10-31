@@ -15,8 +15,17 @@ class PathIndex:
         roots = [(n["path"], n["id"]) for n in store.nodes("project") if n["path"]]
         self.roots = sorted(roots, key=lambda r: -len(r[0]))
         self.by_name = {os.path.basename(r).lower(): r for r, _ in reversed(self.roots)}
+        self.aliases = sorted(((a, c) for a, c in store.get_meta("aliases", []) or []), key=lambda x: -len(x[0]))
+
+    def translate(self, path: str) -> str:
+        """A path inside a second clone -> the same path inside the indexed clone."""
+        for alias, canonical in self.aliases:
+            if path == alias or path.startswith(alias.rstrip("/") + "/"):
+                return canonical + path[len(alias):]
+        return path
 
     def project_of(self, path: str) -> str | None:
+        path = self.translate(path)
         for root, pid in self.roots:
             if path == root or path.startswith(root.rstrip("/") + "/"):
                 return pid
@@ -39,7 +48,7 @@ class PathIndex:
             p = os.path.join(cwd, raw)
         else:
             return None
-        p = os.path.normpath(p)
+        p = self.translate(os.path.normpath(p))
         if p in self.files:
             return self.files[p]
         if is_excluded(p, self.extra):
