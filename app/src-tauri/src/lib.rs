@@ -3,6 +3,7 @@
 mod claude_tail;
 mod events;
 mod paths;
+mod watcher;
 
 use tauri::{Manager, WindowEvent};
 
