@@ -1,4 +1,4 @@
-export interface Filters { code: boolean; docs: boolean; functions: boolean; facts: boolean; noise: boolean; orphans: boolean }
+export interface Filters { code: boolean; docs: boolean; functions: boolean; facts: boolean; noise: boolean; orphans: boolean; maxFiles: number }
 export interface Display { arrows: boolean; labelFade: number; nodeSize: number; linkThickness: number; bloom: number; showImports: boolean }
 export interface Forces { corePull: number; repel: number; linkStrength: number; linkDistance: number; cohesion: number }
 export interface Group { query: string; color: string }
@@ -13,8 +13,8 @@ export interface Settings {
 }
 
 export const DEFAULTS: Settings = {
-  filters: { code: true, docs: true, functions: true, facts: true, noise: false, orphans: true },
-  display: { arrows: false, labelFade: 0.55, nodeSize: 1, linkThickness: 1, bloom: 1.35, showImports: false },
+  filters: { code: true, docs: true, functions: true, facts: true, noise: false, orphans: true, maxFiles: 1500 },
+  display: { arrows: false, labelFade: 0.55, nodeSize: 1, linkThickness: 1, bloom: 0.9, showImports: false },
   forces: { corePull: 0.08, repel: 18, linkStrength: 0.05, linkDistance: 1, cohesion: 1 },
   groups: [],
   areaColors: {},

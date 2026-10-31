@@ -21,6 +21,13 @@ describe('visibleIds', () => {
     const hit = visibleIds(tiny, ix, { ...base, query: 'b.py' }, DEFAULTS.filters)
     expect(ids(hit)).toEqual(['area:a', 'file:/x/p/b.py', 'project:p', 'self'])
   })
+  it('caps visible files at the most important ones', () => {
+    const v = visibleIds(tiny, ix, base, { ...DEFAULTS.filters, maxFiles: 1 })
+    expect(v.has('file:/x/p/b.py')).toBe(true)
+    expect(v.has('file:/x/p/a.py')).toBe(false)
+    const expanded = visibleIds(tiny, ix, { ...base, expanded: new Set(['project:p']) }, { ...DEFAULTS.filters, maxFiles: 1 })
+    expect(expanded.has('file:/x/p/a.py')).toBe(true)
+  })
   it('local graph is a BFS over every edge kind', () => {
     const local = visibleIds(tiny, ix, { ...base, local: { id: 'file:/x/p/a.py', depth: 1 } }, DEFAULTS.filters)
     expect(ids(local)).toEqual(['file:/x/p/a.py', 'file:/x/p/b.py', 'fn:/x/p/a.py#run', 'project:p'])

@@ -20,6 +20,15 @@ def export(store, out_path, max_files: int = 6000, event_days: int = 120, now: f
     for e in events:
         if e["ts"] > last.get(e["item"], 0):
             last[e["item"]] = e["ts"]
+    parent = {n["id"]: n["parent"] for n in nodes}
+    for item, ts in list(last.items()):  # parents show the newest activity of anything below them
+        p = parent.get(item)
+        for _ in range(6):
+            if not p:
+                break
+            if ts > last.get(p, 0):
+                last[p] = ts
+            p = parent.get(p)
     out_nodes = []
     for n in nodes:
         s = scores.get(n["id"], {})

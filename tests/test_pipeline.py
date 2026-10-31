@@ -20,6 +20,8 @@ def test_full_run_on_fixture_world(world):
     assert max(alpha_files, key=lambda n: n["importance"])["id"] == f"file:{a}/pkg/core.py"
     core = files[f"file:{a}/pkg/core.py"]
     assert core["lod"] == 0 and core["evidence"] and core["signals"]["attention"] == 1.0
+    alpha_node = next(n for n in data["nodes"] if n["id"] == f"project:dir:{a}")
+    assert alpha_node["lastActivity"] >= core["lastActivity"]  # parents show their newest child activity
     alpha, beta = (next(n for n in data["nodes"] if n["id"] == i) for i in (f"project:dir:{a}", "project:gh:malek1414/beta"))
     assert alpha["parent"] == beta["parent"] != "area:unsorted"
     assert (world["home"] / "status.json").exists() and (world["home"] / "graph.db").exists()

@@ -1868,6 +1868,8 @@ def test_full_run_on_fixture_world(world):
     assert max(alpha_files, key=lambda n: n["importance"])["id"] == f"file:{a}/pkg/core.py"
     core = files[f"file:{a}/pkg/core.py"]
     assert core["lod"] == 0 and core["evidence"] and core["signals"]["attention"] == 1.0
+    alpha_node = next(n for n in data["nodes"] if n["id"] == f"project:dir:{a}")
+    assert alpha_node["lastActivity"] >= core["lastActivity"]  # parents show their newest child activity
     alpha, beta = (next(n for n in data["nodes"] if n["id"] == i) for i in (f"project:dir:{a}", "project:gh:malek1414/beta"))
     assert alpha["parent"] == beta["parent"] != "area:unsorted"
     assert (world["home"] / "status.json").exists() and (world["home"] / "graph.db").exists()
@@ -1935,6 +1937,15 @@ def export(store, out_path, max_files: int = 6000, event_days: int = 120, now: f
     for e in events:
         if e["ts"] > last.get(e["item"], 0):
             last[e["item"]] = e["ts"]
+    parent = {n["id"]: n["parent"] for n in nodes}
+    for item, ts in list(last.items()):  # parents show the newest activity of anything below them
+        p = parent.get(item)
+        for _ in range(6):
+            if not p:
+                break
+            if ts > last.get(p, 0):
+                last[p] = ts
+            p = parent.get(p)
     out_nodes = []
     for n in nodes:
         s = scores.get(n["id"], {})

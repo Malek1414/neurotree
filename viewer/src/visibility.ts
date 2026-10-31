@@ -41,8 +41,10 @@ export function visibleIds(data: GraphData, index: GraphIndex, state: ViewState,
     return out
   }
   const selectedFile = state.selected ? index.byId.get(state.selected) : undefined
+  const topFiles = new Set(data.nodes.filter((n) => n.level === 3 && n.lod === 0)
+    .sort((a, b) => b.importance - a.importance).slice(0, filters.maxFiles).map((n) => n.id))
   for (const n of data.nodes) {
-    let show = n.level <= 2 || n.lod === 0
+    let show = n.level <= 2 || topFiles.has(n.id)
     if (n.level === 3 && n.parent && state.expanded.has(n.parent)) show = true
     if (n.level === 4) show = !!selectedFile && (n.parent === selectedFile.id || state.expanded.has(n.parent ?? ''))
     if (state.query) show = matches(n, state.query)

@@ -401,7 +401,7 @@ export function resolvePath(index: GraphIndex, path: string): string | null {
 
 **File:** `viewer/src/settings.ts`
 ```ts
-export interface Filters { code: boolean; docs: boolean; functions: boolean; facts: boolean; noise: boolean; orphans: boolean }
+export interface Filters { code: boolean; docs: boolean; functions: boolean; facts: boolean; noise: boolean; orphans: boolean; maxFiles: number }
 export interface Display { arrows: boolean; labelFade: number; nodeSize: number; linkThickness: number; bloom: number; showImports: boolean }
 export interface Forces { corePull: number; repel: number; linkStrength: number; linkDistance: number; cohesion: number }
 export interface Group { query: string; color: string }
@@ -416,8 +416,8 @@ export interface Settings {
 }
 
 export const DEFAULTS: Settings = {
-  filters: { code: true, docs: true, functions: true, facts: true, noise: false, orphans: true },
-  display: { arrows: false, labelFade: 0.55, nodeSize: 1, linkThickness: 1, bloom: 1.35, showImports: false },
+  filters: { code: true, docs: true, functions: true, facts: true, noise: false, orphans: true, maxFiles: 1500 },
+  display: { arrows: false, labelFade: 0.55, nodeSize: 1, linkThickness: 1, bloom: 0.9, showImports: false },
   forces: { corePull: 0.08, repel: 18, linkStrength: 0.05, linkDistance: 1, cohesion: 1 },
   groups: [],
   areaColors: {},
@@ -663,6 +663,13 @@ describe('visibleIds', () => {
     const hit = visibleIds(tiny, ix, { ...base, query: 'b.py' }, DEFAULTS.filters)
     expect(ids(hit)).toEqual(['area:a', 'file:/x/p/b.py', 'project:p', 'self'])
   })
+  it('caps visible files at the most important ones', () => {
+    const v = visibleIds(tiny, ix, base, { ...DEFAULTS.filters, maxFiles: 1 })
+    expect(v.has('file:/x/p/b.py')).toBe(true)
+    expect(v.has('file:/x/p/a.py')).toBe(false)
+    const expanded = visibleIds(tiny, ix, { ...base, expanded: new Set(['project:p']) }, { ...DEFAULTS.filters, maxFiles: 1 })
+    expect(expanded.has('file:/x/p/a.py')).toBe(true)
+  })
   it('local graph is a BFS over every edge kind', () => {
     const local = visibleIds(tiny, ix, { ...base, local: { id: 'file:/x/p/a.py', depth: 1 } }, DEFAULTS.filters)
     expect(ids(local)).toEqual(['file:/x/p/a.py', 'file:/x/p/b.py', 'fn:/x/p/a.py#run', 'project:p'])
@@ -719,8 +726,10 @@ export function visibleIds(data: GraphData, index: GraphIndex, state: ViewState,
     return out
   }
   const selectedFile = state.selected ? index.byId.get(state.selected) : undefined
+  const topFiles = new Set(data.nodes.filter((n) => n.level === 3 && n.lod === 0)
+    .sort((a, b) => b.importance - a.importance).slice(0, filters.maxFiles).map((n) => n.id))
   for (const n of data.nodes) {
-    let show = n.level <= 2 || n.lod === 0
+    let show = n.level <= 2 || topFiles.has(n.id)
     if (n.level === 3 && n.parent && state.expanded.has(n.parent)) show = true
     if (n.level === 4) show = !!selectedFile && (n.parent === selectedFile.id || state.expanded.has(n.parent ?? ''))
     if (state.query) show = matches(n, state.query)
@@ -897,6 +906,7 @@ export class Replay {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Neurotree</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -964,6 +974,7 @@ export async function onIndexStatus(cb: (s: IndexStatus) => void): Promise<Unlis
 import ForceGraph3D from '3d-force-graph'
 import { forceX, forceY, forceZ } from 'd3-force-3d'
 import * as THREE from 'three'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import SpriteText from 'three-spritetext'
 import type { GraphIndex } from './data'
@@ -1028,9 +1039,13 @@ export class Scene {
       .onNodeClick((n: SNode) => this.click(n.id))
       .onBackgroundClick(() => this.h.onBackground())
       .cooldownTicks(160)
+      .cooldownTime(6000)
     this.graph.d3Force('center', null)
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(el.clientWidth, el.clientHeight), settings.display.bloom, 0.55, 0.08)
+    this.graph.scene().background = new THREE.Color('#05060a')  // color-managed; the clear color got sRGB-encoded twice
+    this.graph.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(el.clientWidth / 2, el.clientHeight / 2), settings.display.bloom, 0.4, 0.18)
     this.graph.postProcessingComposer().addPass(this.bloom)
+    this.graph.postProcessingComposer().addPass(new OutputPass())  // linear -> sRGB, else the background washes out
     this.graph.cameraPosition({ x: 0, y: 260, z: 1500 }, { x: 0, y: 0, z: 0 })
     window.addEventListener('resize', () => this.graph.width(el.clientWidth).height(el.clientHeight))
   }
@@ -1039,6 +1054,7 @@ export class Scene {
     if (n.level === 0) return '#fff1cf'
     for (const g of this.settings.groups) if (g.query && matches(n, g.query)) return g.color
     const area = n.level === 1 ? n.id : this.index.areaOf.get(n.id)
+    if (area === 'area:unsorted' && !this.settings.areaColors[area]) return '#4a5163'
     return (area && (this.settings.areaColors[area] ?? this.index.byId.get(area)?.color)) || '#8b93a7'
   }
 
@@ -1072,10 +1088,10 @@ export class Scene {
     look.mesh.scale.setScalar(look.base)
     const wantLabel = n.level <= 1 || (n.level === 2 && imp >= d.labelFade) || n.id === this.selected
     if (wantLabel && !look.label) {
-      const t = new SpriteText(n.label, n.level === 0 ? 11 : n.level === 1 ? 8 : 5, '#e9e6dc')
+      const t = new SpriteText(n.label, n.level === 0 ? 24 : n.level === 1 ? 16 : 9, '#e9e6dc')
       t.fontFace = 'Inter, system-ui, -apple-system, sans-serif'
       t.material.depthWrite = false
-      t.position.y = look.base + (n.level <= 1 ? 10 : 5)
+      t.position.y = look.base + (n.level <= 1 ? 16 : 8)
       look.group.add(t)
       look.label = t
     }
@@ -1218,7 +1234,7 @@ export class Scene {
     const n = this.nodeObjs.get(id)
     if (!n) return
     const p = new THREE.Vector3(n.x ?? 0, n.y ?? 0, n.z ?? 0)
-    const dist = 90 + (this.looks.get(id)?.base ?? 4) * 14
+    const dist = 170 + (this.looks.get(id)?.base ?? 4) * 22
     const cam = p.length() < 1 ? new THREE.Vector3(0, 120, dist * 3) : p.clone().multiplyScalar(1 + dist / p.length())
     this.graph.cameraPosition({ x: cam.x, y: cam.y, z: cam.z }, { x: p.x, y: p.y, z: p.z }, 1100)
   }
@@ -1293,6 +1309,7 @@ const CONTROLS: Control[] = [
   { section: 'Filters', key: 'filters.facts', label: 'Memory facts', kind: 'toggle' },
   { section: 'Filters', key: 'filters.noise', label: 'Lockfiles and generated', kind: 'toggle' },
   { section: 'Filters', key: 'filters.orphans', label: 'Untouched files', kind: 'toggle' },
+  { section: 'Filters', key: 'filters.maxFiles', label: 'Files shown', kind: 'range', min: 200, max: 6000, step: 100 },
   { section: 'Display', key: 'display.arrows', label: 'Arrows', kind: 'toggle' },
   { section: 'Display', key: 'display.showImports', label: 'All import links', kind: 'toggle' },
   { section: 'Display', key: 'display.labelFade', label: 'Label threshold', kind: 'range', min: 0, max: 1, step: 0.05 },
@@ -1443,7 +1460,7 @@ export class UI {
     actions.append(ctx.local
       ? el('button', { class: 'ghost', text: 'Back to full tree', click: () => this.h.onLocal(null, 0) })
       : el('button', { class: 'ghost', text: 'Local graph', click: () => this.h.onLocal(n.id, Number(depth.value)) }), depth)
-    this.panel.replaceChildren(
+    const parts: Array<Node | null> = [
       el('button', { class: 'close', text: 'x', 'aria-label': 'Close', click: () => this.h.onClose() }),
       el('div', { class: 'kicker', text: [n.kind, this.areaName(n.id)].filter(Boolean).join(' · ') }),
       el('h2', { text: n.label }),
@@ -1454,7 +1471,8 @@ export class UI {
       el('div', { class: 'meta', text: `Last activity: ${ago(n.lastActivity)}` }),
       facts.length ? el('div', { class: 'facts' }, el('h4', { text: 'From memory' }), ...facts.map((f) => el('p', { text: f.label }))) : null,
       actions,
-    )
+    ]
+    this.panel.replaceChildren(...parts.filter((x): x is Node => x !== null))
     this.panel.classList.remove('hidden')
   }
 }
@@ -1541,6 +1559,7 @@ async function boot(): Promise<void> {
 
   refresh()
   setMode('live')
+  if (import.meta.env.DEV) Object.assign(window, { __neurotree: { scene, data, index } })  // dev-only debugging handle
 
   // Live: real changes from the shell; in a plain browser, a sample of real recent events keeps the tree alive.
   const recent = data.events.slice(-400)
