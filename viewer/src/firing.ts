@@ -13,6 +13,11 @@ export function chainToCore(index: GraphIndex, id: string): string[] {
   return out
 }
 
+/** Rendering pauses after idleMs without interaction, unless a replay is playing (the app runs all day). */
+export function isIdle(now: number, lastActive: number, replayPlaying: boolean, idleMs = 20_000): boolean {
+  return !replayPlaying && now - lastActive > idleMs
+}
+
 export function pickBurst(events: GEvent[], cap: number): GEvent[] {
   return events.length <= cap ? events : [...events].sort((a, b) => b[3] - a[3]).slice(0, cap)
 }

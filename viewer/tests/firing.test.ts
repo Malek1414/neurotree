@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildIndex } from '../src/data'
-import { chainToCore, intensity, pickBurst, Replay } from '../src/firing'
+import { chainToCore, intensity, isIdle, pickBurst, Replay } from '../src/firing'
 import type { GEvent } from '../src/types'
 import { tiny } from './data.test'
 
@@ -16,6 +16,11 @@ describe('firing', () => {
     const ix = buildIndex(tiny)
     expect(intensity(ix.byId.get('file:/x/p/b.py'), 3)).toBeGreaterThan(intensity(ix.byId.get('file:/x/p/a.py'), 3))
     expect(intensity(undefined)).toBeGreaterThan(0)
+  })
+  it('goes idle after 20 s without interaction unless a replay is playing', () => {
+    expect(isIdle(25_000, 0, false)).toBe(true)
+    expect(isIdle(15_000, 0, false)).toBe(false)
+    expect(isIdle(25_000, 0, true)).toBe(false)
   })
   it('replays events in order over the chosen duration', () => {
     const evs: GEvent[] = Array.from({ length: 10 }, (_, i) => [`n${i}`, 1000 * DAY + i * DAY, 'edit', 1] as GEvent)

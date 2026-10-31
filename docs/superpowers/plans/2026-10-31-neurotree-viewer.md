@@ -765,7 +765,7 @@ export function visibleIds(data: GraphData, index: GraphIndex, state: ViewState,
 ```ts
 import { describe, expect, it } from 'vitest'
 import { buildIndex } from '../src/data'
-import { chainToCore, intensity, pickBurst, Replay } from '../src/firing'
+import { chainToCore, intensity, isIdle, pickBurst, Replay } from '../src/firing'
 import type { GEvent } from '../src/types'
 import { tiny } from './data.test'
 
@@ -781,6 +781,11 @@ describe('firing', () => {
     const ix = buildIndex(tiny)
     expect(intensity(ix.byId.get('file:/x/p/b.py'), 3)).toBeGreaterThan(intensity(ix.byId.get('file:/x/p/a.py'), 3))
     expect(intensity(undefined)).toBeGreaterThan(0)
+  })
+  it('goes idle after 20 s without interaction unless a replay is playing', () => {
+    expect(isIdle(25_000, 0, false)).toBe(true)
+    expect(isIdle(15_000, 0, false)).toBe(false)
+    expect(isIdle(25_000, 0, true)).toBe(false)
   })
   it('replays events in order over the chosen duration', () => {
     const evs: GEvent[] = Array.from({ length: 10 }, (_, i) => [`n${i}`, 1000 * DAY + i * DAY, 'edit', 1] as GEvent)
@@ -819,6 +824,11 @@ export function chainToCore(index: GraphIndex, id: string): string[] {
     cur = cur.parent ? index.byId.get(cur.parent) : undefined
   }
   return out
+}
+
+/** Rendering pauses after idleMs without interaction, unless a replay is playing (the app runs all day). */
+export function isIdle(now: number, lastActive: number, replayPlaying: boolean, idleMs = 20_000): boolean {
+  return !replayPlaying && now - lastActive > idleMs
 }
 
 export function pickBurst(events: GEvent[], cap: number): GEvent[] {
@@ -1482,7 +1492,7 @@ export class UI {
 ```ts
 import { isTauri, loadGraphText, onFsChange, onIndexStatus, openPath, reindex, revealPath } from './bridge'
 import { buildIndex, resolvePath } from './data'
-import { intensity, Replay } from './firing'
+import { intensity, isIdle, Replay } from './firing'
 import { computeTargets } from './layout'
 import { Scene } from './scene'
 import { loadSettings, saveSettings, type Settings } from './settings'
@@ -1538,7 +1548,7 @@ async function boot(): Promise<void> {
       const hit = data.nodes.filter((n) => n.label.toLowerCase().includes(q.toLowerCase())).sort((a, b) => b.importance - a.importance)[0]
       if (hit) { select(hit.id); scene.flyTo(hit.id) }
     },
-    onMode: (m) => setMode(m),
+    onMode: (m) => { wake(); setMode(m) },
     onPlay: () => { if (replay.progress() >= 1) replay.seek(0); replay.playing = !replay.playing },
     onSeek: (f) => { replay.seek(f); scene.setReplayCutoff(replay.cursor) },
     onSettings: (s) => { settings = s; saveSettings(s); replay.setSeconds(s.replaySeconds); scene.applySettings(s); refresh() },
@@ -1564,11 +1574,18 @@ async function boot(): Promise<void> {
   // Live: real changes from the shell; in a plain browser, a sample of real recent events keeps the tree alive.
   const recent = data.events.slice(-400)
   let nextSample = performance.now() + 900
+  let lastActive = performance.now()
+  let paused = false
+  const wake = () => {
+    lastActive = performance.now()
+    if (paused) { paused = false; scene.graph.resumeAnimation() }
+  }
+  for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown']) window.addEventListener(ev, wake, { passive: true })
   if (tauri) {
     await onFsChange((paths, source) => {
       for (const p of paths.slice(0, 40)) {
         const id = resolvePath(index, p)
-        if (id) scene.fire(id, Math.max(0.45, intensity(index.byId.get(id), 3)), source === 'claude' ? '#fff1c9' : undefined)
+        if (id) { wake(); scene.fire(id, Math.max(0.45, intensity(index.byId.get(id), 3)), source === 'claude' ? '#fff1c9' : undefined) }
       }
     })
     await onIndexStatus((s) => {
@@ -1599,12 +1616,13 @@ async function boot(): Promise<void> {
       for (const ev of replay.step(dt)) scene.fire(ev[0], intensity(index.byId.get(ev[0]), ev[3]))
       if (replay.playing) scene.setReplayCutoff(replay.cursor)
       ui.updateReplay(replay.progress(), replay.cursor, replay.playing)
-    } else if (!tauri && recent.length && now >= nextSample) {
+    } else if (!tauri && !paused && recent.length && now >= nextSample) {
       const ev = recent[Math.floor(Math.random() * recent.length)]
       scene.fire(ev[0], intensity(index.byId.get(ev[0]), ev[3]))
       nextSample = now + 700 + Math.random() * 900
     }
-    scene.tick(now, dt)
+    if (!paused && isIdle(now, lastActive, replay.playing)) { paused = true; scene.graph.pauseAnimation() }
+    if (!paused) scene.tick(now, dt)
     if (fpsEl && ++frames && now - fpsAt >= 1000) { fpsEl.textContent = `${frames} fps · ${scene.graph.graphData().nodes.length} nodes`; frames = 0; fpsAt = now }
     requestAnimationFrame(loop)
   }
