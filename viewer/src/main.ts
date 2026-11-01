@@ -118,16 +118,22 @@ async function boot(): Promise<void> {
   for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown']) window.addEventListener(ev, wake, { passive: true })
   if (tauri) {
     await onFsChange((paths, source) => {
+      if (document.hidden) return  // hidden or covered window: firing nobody sees would only wake the GPU
       for (const p of paths.slice(0, 40)) {
         const id = resolvePath(index, p)
         if (id) { wake(); scene.fire(id, Math.max(0.45, intensity(index.byId.get(id), 3)), source === 'claude' ? '#fff1c9' : undefined) }
       }
     })
+    // A reload parses tens of MB and lays out the whole tree again: while the window is hidden it waits until
+    // the window is seen again (one reload however many index runs happened meanwhile).
+    let stale = false
     await onIndexStatus((s) => {
-      if (s.running) ui.toast('Indexing…')
+      if (s.running) { if (!document.hidden) ui.toast('Indexing…') }
       else if (s.error) ui.toast(`Index failed: ${s.error}`)
+      else if (document.hidden) stale = true
       else { ui.toast('Index updated, reloading'); window.setTimeout(() => location.reload(), 800) }
     })
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && stale) location.reload() })
   }
 
   window.addEventListener('keydown', (e) => {

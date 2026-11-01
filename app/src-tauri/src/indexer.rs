@@ -1,6 +1,6 @@
-//! Runs and supervises the Python indexer (`python -m neurotree all`): one run at a time, retries with
-//! backoff, a startup run when the graph is missing or stale, and a reindex at most every 10 minutes after
-//! the watcher saw changes.
+//! Runs and supervises the Python indexer (`python -m neurotree all`, which lowers itself to background
+//! priority): one run at a time, retries with backoff, a startup run when the graph is missing or stale, and a
+//! reindex at most every 10 minutes after the watcher saw changes (30 on battery, 60 in Low Power Mode).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -125,7 +125,11 @@ impl ReindexPolicy {
         self.last_start = now;
     }
     pub fn due(&self, now: Instant) -> bool {
-        self.dirty && now.duration_since(self.last_start) >= self.min_interval
+        self.due_scaled(now, 1)
+    }
+    /// Due with the interval stretched `factor` times (see `power::factor`).
+    pub fn due_scaled(&self, now: Instant, factor: u32) -> bool {
+        self.dirty && now.duration_since(self.last_start) >= self.min_interval * factor
     }
 }
 
@@ -166,10 +170,20 @@ impl Indexer {
         self.state.lock().unwrap().policy.mark_dirty();
     }
 
-    /// True when changes were seen, nothing runs, and the last run started at least 10 minutes ago.
+    /// True when changes were seen, nothing runs, and the last run started at least 10 minutes ago (times the
+    /// power factor; pmset is asked only once the plain 10 minutes are over).
     pub fn due(&self) -> bool {
+        let now = Instant::now();
+        let base = {
+            let s = self.state.lock().unwrap();
+            !s.running && s.policy.due(now)
+        };
+        if !base {
+            return false;
+        }
+        let factor = crate::power::factor(crate::power::current());
         let s = self.state.lock().unwrap();
-        !s.running && s.policy.due(Instant::now())
+        !s.running && s.policy.due_scaled(now, factor)
     }
 
     /// Starts a run (with retries) on a background thread unless one is running. `on_status` gets
@@ -286,6 +300,17 @@ mod tests {
         assert!(p.due(t0 + MIN_INTERVAL));
         p.on_started(t0 + MIN_INTERVAL);
         assert!(!p.due(t0 + MIN_INTERVAL * 3), "a run clears the changes");
+    }
+
+    #[test]
+    fn on_battery_the_interval_stretches() {
+        let t0 = Instant::now();
+        let mut p = ReindexPolicy::new(MIN_INTERVAL, t0);
+        p.mark_dirty();
+        assert!(p.due_scaled(t0 + MIN_INTERVAL, 1));
+        assert!(!p.due_scaled(t0 + MIN_INTERVAL * 2, 3), "battery: 30 minutes");
+        assert!(p.due_scaled(t0 + MIN_INTERVAL * 3, 3));
+        assert!(!p.due_scaled(t0 + MIN_INTERVAL * 5, 6), "Low Power Mode: 60 minutes");
     }
 
     #[test]

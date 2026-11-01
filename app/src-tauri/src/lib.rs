@@ -6,6 +6,7 @@ mod commands;
 mod events;
 mod indexer;
 mod paths;
+mod power;
 mod tray;
 mod watcher;
 
