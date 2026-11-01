@@ -49,6 +49,11 @@ button.small { padding: 3px 8px; font-size: 12px; }
 .drawer h3 { margin: 0 0 4px; }
 .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 6px 0; }
 .row input[type='range'] { width: 150px; accent-color: var(--accent); }
+.row.area input[type='text'] { flex: 1; min-width: 0; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.row.area select, .row.move select { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); border-radius: 6px; padding: 3px; max-width: 110px; }
+.row.move select { max-width: 200px; }
+.count { color: var(--muted); font-size: 11px; min-width: 22px; text-align: right; }
+.note { color: var(--muted); font-size: 12px; margin: 2px 0 6px; }
 .row.group input[type='text'] { flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
 .replay { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(640px, calc(100% - 32px));
   display: flex; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; backdrop-filter: blur(12px); }

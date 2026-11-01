@@ -73,7 +73,9 @@ pub fn run() {
             commands::status,
             commands::open_path,
             commands::reveal_path,
-            commands::reindex
+            commands::reindex,
+            commands::load_areas,
+            commands::save_areas
         ])
         .setup(|app| {
             let handle = app.handle().clone();

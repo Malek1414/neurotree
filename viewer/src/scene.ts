@@ -77,6 +77,18 @@ export class Scene {
     window.addEventListener('resize', () => this.graph.width(el.clientWidth).height(el.clientHeight))
   }
 
+  /** After area edits: keep positions, drop area objects so their labels and colors are rebuilt. */
+  setIndex(index: GraphIndex): void {
+    this.index = index
+    for (const [id, n] of this.nodeObjs) {
+      const base = index.byId.get(id)
+      if (!base || base.level === 1) { this.nodeObjs.delete(id); this.looks.delete(id); continue }
+      n.parent = base.parent
+      n.label = base.label
+      n.color = base.color
+    }
+  }
+
   baseColor(n: GNode): string {
     if (n.level === 0) return '#fff1cf'
     for (const g of this.settings.groups) if (g.query && matches(n, g.query)) return g.color

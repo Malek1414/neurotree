@@ -14,6 +14,27 @@ export default defineConfig({
   plugins: [{
     name: 'neurotree-graph',
     configureServer(server) {
+      server.middlewares.use('/areas.json', (req, res) => {  // dev only: same file the Tauri shell reads/writes
+        const file = path.join(path.dirname(dataGraph), 'areas.json')
+        if (req.method === 'POST') {
+          let body = ''
+          req.on('data', (c) => { body += c; if (body.length > 2_000_000) req.destroy() })
+          req.on('end', () => {
+            try {
+              const v = JSON.parse(body)
+              if (!v || typeof v !== 'object' || typeof v.areas !== 'object') throw new Error('missing "areas"')
+            } catch (e) { res.statusCode = 400; res.end(String(e)); return }
+            fs.writeFileSync(`${file}.tmp`, body)
+            fs.renameSync(`${file}.tmp`, file)
+            res.end('ok')
+          })
+          return
+        }
+        if (!fs.existsSync(file)) { res.statusCode = 404; res.end('missing'); return }
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-store')
+        fs.createReadStream(file).pipe(res)
+      })
       server.middlewares.use('/graph.json', (req, res) => {
         const name = new URL(req.url ?? '/', 'http://local').searchParams.get('fixture')
         const file = name && /^[a-z0-9-]+$/.test(name)

@@ -22,6 +22,22 @@ export async function revealPath(path: string): Promise<void> {
   if (isTauri()) await (await core()).invoke('reveal_path', { path })
 }
 
+export async function loadAreasText(): Promise<string | null> {
+  try {
+    if (isTauri()) return await (await core()).invoke<string>('load_areas')
+    const res = await fetch('/areas.json')
+    return res.ok ? await res.text() : null
+  } catch {
+    return null
+  }
+}
+
+export async function saveAreasText(text: string): Promise<void> {
+  if (isTauri()) { await (await core()).invoke('save_areas', { text }); return }
+  const res = await fetch('/areas.json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: text })
+  if (!res.ok) throw new Error(await res.text())
+}
+
 export async function reindex(): Promise<boolean> {
   return isTauri() ? (await core()).invoke<boolean>('reindex') : false
 }

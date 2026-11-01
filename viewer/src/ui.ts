@@ -1,3 +1,4 @@
+import { UNSORTED, type AreasFile } from './areas'
 import type { GraphIndex } from './data'
 import type { Settings } from './settings'
 import type { GNode, GraphData } from './types'
@@ -16,6 +17,10 @@ export interface UIHandlers {
   onExpand(id: string): void
   onLocal(id: string | null, depth: number): void
   onClose(): void
+  onAreaRename(slug: string, name: string): void
+  onAreaColor(slug: string, color: string): void
+  onAreaMerge(from: string, into: string): void
+  onMoveProject(project: string, slug: string): void
 }
 
 type Attrs = Record<string, string | number | boolean | ((e: Event) => void)>
@@ -82,6 +87,7 @@ export class UI {
   private when: HTMLElement
   private playBtn: HTMLButtonElement
   private toastEl: HTMLElement
+  private areas: AreasFile | null = null
 
   constructor(root: HTMLElement, private index: GraphIndex, private data: GraphData, private settings: Settings, private h: UIHandlers, private tauri: boolean) {
     this.search = el('input', { type: 'search', placeholder: 'Search files, projects, notes  ( / )', spellcheck: false,
@@ -111,6 +117,15 @@ export class UI {
     this.buildDrawer()
   }
 
+  setIndex(index: GraphIndex): void { this.index = index; this.buildDrawer() }
+  setAreas(areas: AreasFile | null): void { this.areas = areas; this.buildDrawer() }
+
+  private areaList(): Array<{ slug: string; node: GNode }> {
+    return (this.index.children.get('self') ?? [])
+      .map((node) => ({ slug: node.id.replace(/^area:/, ''), node }))
+      .sort((a, b) => Number(a.slug === UNSORTED) - Number(b.slug === UNSORTED) || b.node.importance - a.node.importance)
+  }
+
   areaName(id: string): string {
     const area = this.index.areaOf.get(id)
     return area ? this.index.byId.get(area)?.label ?? '' : ''
@@ -128,12 +143,24 @@ export class UI {
         : el('input', { type: 'range', min: c.min, max: c.max, step: c.step, value: Number(value), input: (e) => this.set(c.key, Number((e.target as HTMLInputElement).value)) })
       sec.append(el('label', { class: `row ${c.kind}` }, el('span', { text: c.label }), input))
     }
-    const groups = el('section', {}, el('h4', { text: 'Groups' }))
-    for (const area of this.index.children.get('self') ?? []) {
-      const color = this.settings.areaColors[area.id] ?? area.color ?? '#8b93a7'
-      groups.append(el('label', { class: 'row' }, el('span', { text: area.label }),
-        el('input', { type: 'color', value: color, input: (e) => { this.settings.areaColors[area.id] = (e.target as HTMLInputElement).value; this.h.onSettings(this.settings) } })))
+    const areaSec = el('section', {}, el('h4', { text: 'Areas' }))
+    if (!this.areas) areaSec.append(el('p', { class: 'note', text: 'Areas can be edited once the indexer has written areas.json.' }))
+    else {
+      areaSec.append(el('p', { class: 'note', text: this.areas.reviewed ? 'Reviewed: every reindex keeps this placement.' : 'Proposal from your attention. Any edit marks it reviewed.' }))
+      const list = this.areaList()
+      for (const { slug, node } of list) {
+        const count = (this.index.children.get(node.id) ?? []).length
+        const merge = slug === UNSORTED ? null : el('select', { title: 'Merge into', change: (e) => { const v = (e.target as HTMLSelectElement).value; if (v) this.h.onAreaMerge(slug, v) } },
+          el('option', { value: '', text: 'Merge…' }), ...list.filter((o) => o.slug !== slug).map((o) => el('option', { value: o.slug, text: o.node.label })))
+        areaSec.append(el('div', { class: 'row area' },
+          el('input', { type: 'text', value: node.label, title: `${count} projects`, change: (e) => this.h.onAreaRename(slug, (e.target as HTMLInputElement).value) }),
+          el('span', { class: 'count', text: String(count) }),
+          el('input', { type: 'color', value: node.color ?? '#8b93a7', change: (e) => this.h.onAreaColor(slug, (e.target as HTMLInputElement).value) }),
+          merge))
+      }
     }
+    this.drawer.append(areaSec)
+    const groups = el('section', {}, el('h4', { text: 'Groups' }))
     this.settings.groups.forEach((g, i) => {
       groups.append(el('div', { class: 'row group' },
         el('input', { type: 'text', value: g.query, placeholder: 'search term', change: (e) => { g.query = (e.target as HTMLInputElement).value; this.h.onSettings(this.settings) } }),
@@ -188,6 +215,10 @@ export class UI {
       if (this.tauri) actions.append(el('button', { class: 'ghost', text: 'Reveal in Finder', click: () => this.h.onReveal(n.id) }))
     }
     if (n.level === 2) actions.append(el('button', { class: 'ghost', text: ctx.expanded ? 'Collapse files' : 'Show all files', click: () => this.h.onExpand(n.id) }))
+    const move = n.level === 2 && this.areas
+      ? el('label', { class: 'row move' }, el('span', { text: 'Area' }), el('select', { change: (e) => this.h.onMoveProject(n.id, (e.target as HTMLSelectElement).value) },
+          ...this.areaList().map(({ slug, node }) => el('option', { value: slug, text: node.label, selected: n.parent === node.id }))))
+      : null
     const depth = el('select', { change: (e) => this.h.onLocal(n.id, Number((e.target as HTMLSelectElement).value)) },
       ...[1, 2, 3].map((d) => el('option', { value: d, text: `depth ${d}`, selected: d === this.settings.localDepth })))
     actions.append(ctx.local
@@ -203,6 +234,7 @@ export class UI {
       n.evidence.length ? el('ul', { class: 'evidence' }, ...n.evidence.map((x) => el('li', { text: x }))) : null,
       el('div', { class: 'meta', text: `Last activity: ${ago(n.lastActivity)}` }),
       facts.length ? el('div', { class: 'facts' }, el('h4', { text: 'From memory' }), ...facts.map((f) => el('p', { text: f.label }))) : null,
+      move,
       actions,
     ]
     this.panel.replaceChildren(...parts.filter((x): x is Node => x !== null))

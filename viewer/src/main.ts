@@ -1,4 +1,5 @@
-import { isTauri, loadGraphText, onFsChange, onIndexStatus, openPath, reindex, revealPath } from './bridge'
+import { applyAreas, mergeAreas, moveProject, parseAreas, recolorArea, renameArea, type AreasFile } from './areas'
+import { isTauri, loadAreasText, loadGraphText, onFsChange, onIndexStatus, openPath, reindex, revealPath, saveAreasText } from './bridge'
 import { buildIndex, resolvePath } from './data'
 import { intensity, isIdle, Replay } from './firing'
 import { computeTargets } from './layout'
@@ -23,7 +24,10 @@ async function boot(): Promise<void> {
     uiEl.innerHTML = '<div class="empty"><h1>The graph is empty</h1><p>The indexer found no data. Check settings.json in the Neurotree data folder.</p></div>'
     return
   }
-  const index = buildIndex(data)
+  // Reviewed areas edited since the last index run are applied before anything is drawn (not for fixtures).
+  let areas: AreasFile | null = new URLSearchParams(location.search).has('fixture') ? null : parseAreas((await loadAreasText()) ?? '')
+  if (areas) applyAreas(data, areas)
+  let index = buildIndex(data)
   let settings: Settings = loadSettings()
   const state: ViewState = { expanded: new Set(), selected: null, local: null, query: '' }
   let mode: Mode = 'live'
@@ -66,7 +70,30 @@ async function boot(): Promise<void> {
     onExpand: (id) => { if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id); refresh(); select(id) },
     onLocal: (id, depth) => { state.local = id ? { id, depth } : null; if (id) { settings.localDepth = depth; saveSettings(settings) } refresh(); if (id) select(id) },
     onClose: () => { select(null); scene.setHighlight(null) },
+    onAreaRename: (slug, name) => editAreas((a) => renameArea(a, slug, name)),
+    onAreaColor: (slug, color) => editAreas((a) => recolorArea(a, slug, color)),
+    onAreaMerge: (from, into) => editAreas((a) => mergeAreas(a, from, into)),
+    onMoveProject: (project, slug) => editAreas((a) => moveProject(a, project, slug)),
   }, tauri)
+  ui.setAreas(areas)
+
+  let saveTimer = 0
+  function editAreas(change: (a: AreasFile) => AreasFile): void {
+    if (!areas) return
+    try { areas = change(areas) } catch (e) { ui.toast((e as Error).message); return }
+    applyAreas(data, areas)
+    index = buildIndex(data)
+    scene.setIndex(index)
+    ui.setIndex(index)
+    ui.setAreas(areas)
+    refresh()
+    if (state.selected) select(state.selected)
+    window.clearTimeout(saveTimer)
+    const text = JSON.stringify(areas, null, 1)
+    saveTimer = window.setTimeout(() => {
+      saveAreasText(text).then(() => ui.toast('Areas saved, every reindex keeps them')).catch((e) => ui.toast(`Could not save areas: ${e}`))
+    }, 600)
+  }
 
   function setMode(m: Mode): void {
     mode = m

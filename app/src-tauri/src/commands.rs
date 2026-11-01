@@ -1,4 +1,5 @@
-//! Commands the viewer invokes: `load_graph`, `status`, `open_path`, `reveal_path`, `reindex`.
+//! Commands the viewer invokes: `load_graph`, `status`, `open_path`, `reveal_path`, `reindex`,
+//! `load_areas`, `save_areas`.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,33 @@ pub fn checked_path(path: &str, action: Action) -> Result<PathBuf, String> {
     Ok(p)
 }
 
+/// areas.json only lists area names, colors and project ids; anything bigger is not from the viewer.
+pub const MAX_AREAS_BYTES: usize = 2_000_000;
+
+pub fn read_areas(dir: &Path) -> Result<String, String> {
+    std::fs::read_to_string(dir.join("areas.json")).map_err(|e| format!("no areas.json yet ({e}); run Reindex first"))
+}
+
+/// Checks the shape (`{"areas": {slug: {name, color, projects: [id]}}}`) and replaces the file atomically.
+pub fn write_areas(dir: &Path, text: &str) -> Result<(), String> {
+    if text.len() > MAX_AREAS_BYTES {
+        return Err("areas.json too large".into());
+    }
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
+    let areas = v.get("areas").and_then(Value::as_object).ok_or("missing \"areas\" object")?;
+    for (slug, a) in areas {
+        let ok = a.get("name").is_some_and(Value::is_string)
+            && a.get("color").is_some_and(Value::is_string)
+            && a.get("projects").and_then(Value::as_array).is_some_and(|p| p.iter().all(Value::is_string));
+        if !ok || slug.is_empty() || slug.contains('/') || slug.contains("..") {
+            return Err(format!("bad area {slug:?}"));
+        }
+    }
+    let tmp = dir.join("areas.json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join("areas.json")).map_err(|e| e.to_string())
+}
+
 fn run_open(args: &[&std::ffi::OsStr]) -> Result<(), String> {
     let out = Command::new("/usr/bin/open").args(args).output().map_err(|e| format!("open failed: {e}"))?;
     if out.status.success() {
@@ -84,6 +112,18 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     run_open(&["-R".as_ref(), p.as_os_str()])
 }
 
+/// Raw text of `<data dir>/areas.json` (the indexer's proposal, or Malek's reviewed areas).
+#[tauri::command]
+pub fn load_areas(state: State<'_, AppState>) -> Result<String, String> {
+    read_areas(&state.data_dir)
+}
+
+/// Saves reviewed areas; the indexer keeps this placement on every later run.
+#[tauri::command]
+pub fn save_areas(state: State<'_, AppState>, text: String) -> Result<(), String> {
+    write_areas(&state.data_dir, &text)
+}
+
 /// Starts a full reindex in the background; false if one is already running.
 #[tauri::command]
 pub fn reindex(app: AppHandle, state: State<'_, AppState>) -> bool {
@@ -94,6 +134,27 @@ pub fn reindex(app: AppHandle, state: State<'_, AppState>) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn areas_are_validated_and_written_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_areas(dir.path()).is_err());
+        let good = r##"{"reviewed":true,"areas":{"hack":{"name":"Hack","color":"#f5a524","projects":["project:p"]}}}"##;
+        write_areas(dir.path(), good).unwrap();
+        assert_eq!(read_areas(dir.path()).unwrap(), good);
+        assert!(!dir.path().join("areas.json.tmp").exists());
+        for bad in [
+            "{nope",
+            r#"{"x":1}"#,
+            r##"{"areas":{"a":{"name":1,"color":"#fff","projects":[]}}}"##,
+            r##"{"areas":{"a":{"name":"A","color":"#fff","projects":[1]}}}"##,
+            r##"{"areas":{"../x":{"name":"A","color":"#fff","projects":[]}}}"##,
+        ] {
+            assert!(write_areas(dir.path(), bad).is_err(), "{bad}");
+        }
+        assert_eq!(read_areas(dir.path()).unwrap(), good, "a rejected write leaves the file alone");
+        assert!(write_areas(dir.path(), &" ".repeat(MAX_AREAS_BYTES + 1)).is_err());
+    }
 
     #[test]
     fn graph_is_returned_raw_or_explained() {
