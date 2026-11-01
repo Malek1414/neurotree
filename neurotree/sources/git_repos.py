@@ -1,6 +1,7 @@
 """Local git repos -> project and file nodes, commit and edit events (history), blob ids for shared-code links."""
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -64,18 +65,88 @@ def numstat_path(p: str) -> str:
     return p.split("=>", 1)[1].strip()
 
 
+def git_dir(repo: Path) -> Path | None:
+    """<repo>/.git, or the folder a worktree's or submodule's .git file points to."""
+    d = Path(repo) / ".git"
+    if d.is_dir():
+        return d
+    try:
+        line = d.read_text(errors="replace").strip()
+    except OSError:
+        return None
+    if line.startswith("gitdir:"):
+        g = Path(line[7:].strip())
+        return g if g.is_absolute() else (Path(repo) / g).resolve()
+    return None
+
+
+def _common(gd: Path) -> Path:
+    try:
+        rel = (gd / "commondir").read_text().strip()
+        return (gd / rel).resolve()
+    except OSError:
+        return gd
+
+
+def head_sha(repo: Path) -> str:
+    """HEAD's commit read from the files in .git (no git process); falls back to `git rev-parse`."""
+    gd = git_dir(repo)
+    try:
+        head = (gd / "HEAD").read_text().strip() if gd else ""
+    except OSError:
+        head = ""
+    if head and not head.startswith("ref:"):
+        return head
+    if head.startswith("ref:"):
+        ref = head[4:].strip()
+        for base in (gd, _common(gd)):
+            try:
+                return (base / ref).read_text().strip()
+            except OSError:
+                pass
+        try:
+            for line in (_common(gd) / "packed-refs").read_text().splitlines():
+                if line.endswith(" " + ref):
+                    return line.split(" ", 1)[0]
+        except OSError:
+            pass
+    return git(repo, "rev-parse", "HEAD").strip()
+
+
+def origin_url(repo: Path) -> str:
+    """remote.origin.url from .git/config (no git process); falls back to `git config`."""
+    gd = git_dir(repo)
+    try:
+        text = (_common(gd) / "config").read_text(errors="replace") if gd else None
+    except OSError:
+        text = None
+    if text is None:
+        return git(repo, "config", "--get", "remote.origin.url").strip()
+    m = re.search(r'^\s*\[remote "origin"\][^\[]*?^\s*url\s*=\s*(\S+)', text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
 def project_id(repo: Path) -> tuple[str, str]:
-    remote = git(repo, "config", "--get", "remote.origin.url").strip()
+    remote = origin_url(repo)
     key = normalize_remote(remote) if remote else None
     return (f"project:{key}" if key else f"project:dir:{repo}"), remote
 
 
-def head_time(repo: Path) -> float:
+def head_time(repo: Path, cache=None) -> float:
+    """Time of the newest commit, remembered per HEAD commit (asked for every clone on every run)."""
+    sha = head_sha(repo) if cache else ""
+    if sha:
+        hit = cache.get("headtime", str(repo), sha)
+        if hit is not None:
+            return hit
     out = git(repo, "log", "-1", "--format=%ct").strip()
-    return float(out) if out else 0.0
+    t = float(out) if out else 0.0
+    if sha:
+        cache.put("headtime", str(repo), sha, t)
+    return t
 
 
-def pick_clones(repos: list[Path]) -> tuple[list[Path], dict[Path, list[Path]]]:
+def pick_clones(repos: list[Path], cache=None) -> tuple[list[Path], dict[Path, list[Path]]]:
     """Several local clones of one GitHub repo -> index only the one with the newest commit; the others become
     aliases, so their paths still count for the project without duplicating its files."""
     by_project = defaultdict(list)
@@ -83,7 +154,7 @@ def pick_clones(repos: list[Path]) -> tuple[list[Path], dict[Path, list[Path]]]:
         by_project[project_id(r)[0]].append(r)
     canonical, clones = [], {}
     for rs in by_project.values():
-        best = max(rs, key=lambda r: (head_time(r), -len(str(r))))
+        best = max(rs, key=lambda r: (head_time(r, cache) if len(rs) > 1 else 0.0, -len(str(r))))
         canonical.append(best)
         clones[best] = sorted(r for r in rs if r != best)
     return sorted(canonical), clones
@@ -130,6 +201,30 @@ def index_repo(store, repo: Path, since_days: int, extra=(), now: float | None =
                 events.append((fid, ts, "commit", math.log2(1 + changed) or 0.5, "git", None))
     store.add_events(events)
     return {"project": pid, "files": len(kept), "events": len(events), "kept": kept, "blobs": blobs}
+
+
+STAMP_VERSION = "1"  # bump when index_repo or add_structure change what they write
+
+
+def repo_stamp(repo: Path, since_days: int, extra=()) -> str | None:
+    """What a repo's index depends on: HEAD, the tracked files that differ from it (with their mtimes) and the
+    settings. Unchanged stamp -> the cached nodes, edges and events are still right. ~10-50 ms per repo instead of
+    a full index (ls-files, stat, a year of log, parsing every module). --no-optional-locks: never rewrite the
+    index (an index rewrite would change nothing here but wake other tools)."""
+    head = head_sha(repo)
+    status = git(repo, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=no")
+    if not head and not status:
+        return None
+    h = hashlib.sha1(f"{STAMP_VERSION}|{head}|{since_days}|{sorted(map(str, extra))}|".encode())
+    h.update(status.encode("utf-8", "replace"))
+    for entry in status.split("\0"):
+        rel = entry[3:] if len(entry) > 3 else ""
+        if rel:
+            try:
+                h.update(f"|{rel}:{(repo / rel).stat().st_mtime_ns}".encode("utf-8", "replace"))
+            except OSError:
+                h.update(f"|{rel}:gone".encode("utf-8", "replace"))
+    return h.hexdigest()
 
 
 def shared_code_edges(store, blobs: dict[str, str]) -> int:

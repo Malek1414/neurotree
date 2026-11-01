@@ -1,0 +1,11 @@
+#!/bin/bash
+# Neurotree's CLI from its checkout: NEUROTREE_REPO (default ~/Desktop/Neurotree), its .venv python.
+# The folder Claude is working in is passed as --cwd, so that project gets a bias.
+REPO="${NEUROTREE_REPO:-$HOME/Desktop/Neurotree}"
+PY="${NEUROTREE_PYTHON:-$REPO/.venv/bin/python}"
+if [ ! -x "$PY" ]; then
+  echo "Neurotree is not set up at $REPO (no $PY). Set NEUROTREE_REPO, or see $REPO/README.md." >&2
+  exit 1
+fi
+HERE="$PWD"
+cd "$REPO" && exec "$PY" -m neurotree "$@" --cwd "$HERE"

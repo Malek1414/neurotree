@@ -2,9 +2,62 @@
 from __future__ import annotations
 
 import os
+import re
 
 from .kinds import classify, noise_factor
 from .privacy import is_excluded
+
+WORKTREE = re.compile(r"^(.*?)/\.claude/worktrees/[^/]+(/.*)?$")
+GENERIC = {"src", "app", "apps", "lib", "libs", "test", "tests", "docs", "web", "server", "client", "core", "main",
+           "scripts", "packages", "projects", "desktop", "documents", "code", "repo", "repos", "tmp", "build"}
+
+
+class Translator:
+    """Old or indirect paths -> where that file lives in the indexed tree now:
+    a second clone -> the indexed clone; an agent worktree (<repo>/.claude/worktrees/<name>/x) -> <repo>/x;
+    a project that has moved since (~/Desktop/simulacrum/x -> ~/Desktop/Projects/simulacrum/x), so Claude's
+    attention from before a move still counts."""
+
+    def __init__(self, roots, aliases=()):
+        self.roots = sorted(roots, key=lambda r: -len(r))
+        self.aliases = sorted(((a, c) for a, c in aliases or []), key=lambda x: -len(x[0]))
+        self.by_name: dict[str, list] = {}
+        for r in self.roots:
+            name = os.path.basename(r).lower()
+            if len(name) >= 4 and name not in GENERIC:
+                self.by_name.setdefault(name, []).append(r)
+        self.memo: dict[str, str] = {}
+
+    def inside(self, path: str) -> bool:
+        return any(path == r or path.startswith(r.rstrip("/") + "/") for r in self.roots)
+
+    def __call__(self, path: str) -> str:
+        if path in self.memo:
+            return self.memo[path]
+        p = path
+        m = WORKTREE.match(p)
+        if m:
+            p = m.group(1) + (m.group(2) or "")
+        for alias, canonical in self.aliases:
+            if p == alias or p.startswith(alias.rstrip("/") + "/"):
+                p = canonical + p[len(alias):]
+                break
+        if not self.inside(p) and not os.path.exists(p):
+            p = self.relocate(p) or p
+        self.memo[path] = p
+        return p
+
+    def relocate(self, path: str) -> str | None:
+        """The deepest folder of `path` named like a known project whose remaining path exists there (or at least
+        starts with a folder that exists there, for a file deleted since)."""
+        parts = path.split("/")
+        for i in range(len(parts) - 1, 0, -1):
+            for root in self.by_name.get(parts[i].lower(), ()):
+                rest = parts[i + 1:]
+                cand = os.path.join(root, *rest) if rest else root
+                if os.path.exists(cand) or (len(rest) > 1 and os.path.isdir(os.path.join(root, rest[0]))):
+                    return cand
+        return None
 
 
 class PathIndex:
@@ -15,14 +68,7 @@ class PathIndex:
         roots = [(n["path"], n["id"]) for n in store.nodes("project") if n["path"]]
         self.roots = sorted(roots, key=lambda r: -len(r[0]))
         self.by_name = {os.path.basename(r).lower(): r for r, _ in reversed(self.roots)}
-        self.aliases = sorted(((a, c) for a, c in store.get_meta("aliases", []) or []), key=lambda x: -len(x[0]))
-
-    def translate(self, path: str) -> str:
-        """A path inside a second clone -> the same path inside the indexed clone."""
-        for alias, canonical in self.aliases:
-            if path == alias or path.startswith(alias.rstrip("/") + "/"):
-                return canonical + path[len(alias):]
-        return path
+        self.translate = Translator([r for r, _ in self.roots], store.get_meta("aliases", []))
 
     def project_of(self, path: str) -> str | None:
         path = self.translate(path)

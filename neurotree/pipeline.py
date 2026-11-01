@@ -5,18 +5,22 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from .areas import assign_areas
+from .cache import Cache, Recorder, replay
 from .config import Settings, data_dir, load_settings
 from .export import export
+from .keys import build_keys
 from .paths import PathIndex
 from .scoring import score
 from .sources.claude_mem import index_memory
 from .sources.claude_sessions import index_sessions
 from .sources.files import index_files
-from .sources.git_repos import find_repos, index_repo, pick_clones, shared_code_edges
+from .sources.git_repos import find_repos, index_repo, pick_clones, repo_stamp, shared_code_edges
 from .sources.github import index_github
 from .store import Store
 from .structure import add_structure
@@ -39,6 +43,7 @@ def run_all(settings: Settings | None = None, home=None, now: float | None = Non
     store = Store(building, wal=False)
     extra, on = tuple(settings.exclude), settings.sources
     status, repos = {}, []
+    cache = Cache(home / "cache.db")  # survives runs: unchanged repos and session logs are not redone
 
     def step(name, fn):
         t0 = time.time()
@@ -53,34 +58,58 @@ def run_all(settings: Settings | None = None, home=None, now: float | None = Non
 
     def git_step():
         repos.extend(find_repos(settings.repo_roots, extra=extra))
-        canonical, clones = pick_clones(repos)
+        canonical, clones = pick_clones(repos, cache)
         aliases = [[str(c), str(best)] for best, cs in clones.items() for c in cs]
         store.set_meta("aliases", aliases)
-        blobs, files, imports, functions = {}, 0, 0, 0
+        blobs, files, imports, functions, reused = {}, 0, 0, 0, 0
         for repo in canonical:
-            info = index_repo(store, repo, settings.history_days, extra, now)
+            stamp = repo_stamp(repo, settings.history_days, extra)
+            hit = cache.get("git", str(repo), stamp) if stamp else None
+            if hit:
+                replay(store, hit["ops"])
+                info, st = hit["info"], hit["structure"]
+                reused += 1
+            else:
+                rec = Recorder(store)
+                info = index_repo(rec, repo, settings.history_days, extra, now)
+                st = add_structure(rec, repo, info["kept"])
+                if stamp:
+                    cache.put("git", str(repo), stamp, {"ops": rec.ops, "info": info, "structure": st})
             if clones.get(repo):
                 store.upsert_node(info["project"], "project", 2, repo.name, clones=[str(c) for c in clones[repo]])
-            st = add_structure(store, repo, info["kept"])
             files, imports, functions = files + info["files"], imports + st["imports"], functions + st["functions"]
             blobs.update(info["blobs"])
-        return {"ok": len(canonical), "clones": len(aliases), "files": files, "imports": imports, "functions": functions,
-                "shared_code": shared_code_edges(store, blobs)}
+        return {"ok": len(canonical), "reused": reused, "clones": len(aliases), "files": files, "imports": imports,
+                "functions": functions, "shared_code": shared_code_edges(store, blobs)}
 
     if on.get("git", True):
         step("git", git_step)
+    def gh_hourly(cmd, **kw):  # the repo list changes rarely: ask GitHub at most once an hour
+        key, stamp = " ".join(cmd), str(int(time.time() // 3600))
+        hit = cache.get("gh", key, stamp)
+        if hit is not None:
+            return SimpleNamespace(stdout=hit, returncode=0)
+        r = subprocess.run(cmd, **kw)
+        if r.returncode == 0 and r.stdout:
+            cache.put("gh", key, stamp, r.stdout)
+        return r
+
     if on.get("github", True):
-        step("github", lambda: index_github(store))
+        step("github", lambda: index_github(store, runner=gh_hourly))
     if on.get("files", True):
         step("files", lambda: index_files(store, settings.doc_roots, {str(r) for r in repos},
-                                          settings.history_days, extra, now))
+                                          settings.history_days, extra, now, cache))
     index = PathIndex(store, extra)
     if on.get("claude_sessions", True):
-        step("claude_sessions", lambda: index_sessions(store, index, settings.claude_projects))
+        step("claude_sessions", lambda: index_sessions(store, index, settings.claude_projects, cache))
     if on.get("claude_mem", True):
         step("claude_mem", lambda: index_memory(store, index, settings.claude_mem_db))
     step("areas", lambda: assign_areas(store, home / "areas.json", owner=settings.owner_name))
     step("score", lambda: {"ok": score(store, now)})
+    step("keys", lambda: build_keys(store, cache))
+    for ns in ("git", "headtime", "gh", "session", "mention", "summary"):
+        cache.prune(ns)
+    cache.close()
     store.set_meta("status", status)
     step("export", lambda: export(store, home / "graph.json", now=now))
     store.close()

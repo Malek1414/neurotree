@@ -2,36 +2,54 @@
 
 A 3D attention tree of everything on this Mac. You sit at the core; your life areas are branches; projects, files and functions grow outward. What you and Claude work on most sits closest to the core and fires hardest: every edit, read and commit sends a signal along its branch into the core.
 
+Ask it things, too: a question attends to every node at once (after "Attention Is All You Need") and gets back the projects, files and memories that hold the attention for it, each with why. Claude uses that through the `/neurotree:scan` plugin. What carried over from the paper, what did not, and the measurements: [docs/attention.md](docs/attention.md).
+
 Stage 1 of 5: indexer + desktop app. Next: connect to Claude, per-hackathon-project mini graphs, the "neurons firing" embed for project sites. Design: [docs/superpowers/specs/2026-10-31-neurotree-design.md](docs/superpowers/specs/2026-10-31-neurotree-design.md).
 
 ## What it reads (read-only, nothing leaves the Mac)
 - Git repos under `~/Desktop` and `~/Documents` (files, imports, functions, a year of commits; second clones count for the original)
 - Your GitHub repos via `gh` (only for repos without a local clone)
 - Documents and Desktop files (names, edit times; `.md`/`.txt` are scanned for the repos they mention)
+- The first line each code file or note says about itself (module docstring, leading comment, Markdown title, a README's first paragraph), for search
 - Claude Code sessions in `~/.claude/projects` (only which files were read or edited, and when, never message text)
 - claude-mem memory (`~/.claude-mem/claude-mem.db`, opened read-only: titles, file lists, times)
 
 Never read: `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.docker`, `~/Library`, and any file or folder named like a secret (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*credential*`, `*secret*`, ...). Mail, Messages, Calendar and Photos are not read; they would need your explicit opt-in later.
 
-Data lives in `~/Library/Application Support/Neurotree/` (`graph.db`, `graph.json`, `status.json`, `areas.json`, `settings.json`).
+Data lives in `~/Library/Application Support/Neurotree/` (`graph.db`, `graph.json`, `status.json`, `areas.json`, `settings.json`, and `cache.db`: what earlier runs worked out, so the next run only redoes what changed; deleting it only makes one run slower).
 
 ## How importance works
 Attention 45 % (Claude touches, half-life 30 days), history 25 % (commits and edits, half-life 90 days), structure 20 % (how much the rest of the code depends on a module), runtime 10 % (share of a recorded run). Each signal is a percentile within its level; lockfiles, generated and vendored files are dimmed. Every node shows its breakdown and evidence.
 
+## Ask it
+```bash
+.venv/bin/python -m neurotree ask "how does the beat grid work"     # projects, files, memory, each with why
+.venv/bin/python -m neurotree now                                   # what you worked on: 24 h, 7 days, 30 days
+.venv/bin/python -m neurotree node ~/Desktop/Neurotree/neurotree/scoring.py   # defines, imports, worked on with
+.venv/bin/python -m neurotree bench                                 # measure it on your own past sessions
+```
+In Claude Code: `/neurotree:scan <question>` (no question: what you worked on lately). Claude runs `ask`, reads only the files it points to, and cites them. Install once:
+```bash
+claude plugin marketplace add ~/Desktop/Neurotree/plugin
+claude plugin install neurotree@neurotree
+```
+
 ## Run it
 ```bash
-uv venv .venv --python 3.13 && uv pip install --python .venv/bin/python networkx pytest
+uv venv .venv --python 3.13 && uv pip install --python .venv/bin/python networkx numpy model2vec pytest
 .venv/bin/python -m neurotree all          # first index, ~1-2 min
 
 cd viewer && npm install && npm run dev    # browser: http://127.0.0.1:5173
 cd app && npm install && npx tauri dev     # desktop app (uses the dev server above)
 cd app && npm run build                    # -> app/src-tauri/target/release/bundle/macos/Neurotree.app
 ```
+Live without the battery cost: the indexer lowers itself to background priority (efficiency cores, throttled disk), redoes only repos and session logs that changed (`cache.db`), and the app waits 3× longer between change-triggered reindexes on battery and 6× in Low Power Mode. A hidden window neither reloads nor fires; it reloads once when you look again.
+
 In the app: drag to orbit, scroll to zoom, arrow keys pan (Shift faster), `/` search, `Esc` reset, `F` frame rate. Live fires on real file changes and on Claude's edits as they happen; Replay plays the last 120 days. Areas are a proposal from your attention until you edit them (Settings > Areas, or a project's panel); after that every reindex keeps your placement.
 
 ## Tests
 ```bash
-.venv/bin/python -m pytest -q              # indexer (29)
+.venv/bin/python -m pytest -q              # indexer (36)
 cd viewer && npm test                      # viewer (33)
-cd app/src-tauri && cargo test             # shell (39)
+cd app/src-tauri && cargo test             # shell (42)
 ```

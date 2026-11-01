@@ -1,0 +1,8 @@
+{
+  "name": "neurotree",
+  "version": "0.1.0",
+  "description": "/neurotree:scan <question> asks Neurotree, the local attention tree of this Mac, which projects, files and claude-mem memories hold the knowledge for a question; Claude then reads only those. /neurotree:scan with no question shows what you worked on lately. Local only, no network, nothing written.",
+  "author": { "name": "Malek Hassan" },
+  "license": "MIT",
+  "keywords": ["knowledge", "retrieval", "attention", "local", "memory"]
+}

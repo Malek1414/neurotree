@@ -10,6 +10,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from ..cache import file_stamp
+
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "mcp__plugin_mozcode_mozcode__code_edit"}
 READ_TOOLS = {"Read", "mcp__plugin_mozcode_mozcode__code_read", "mcp__plugin_mozcode_mozcode__code_outline"}
 SEARCH_TOOLS = {"Glob", "Grep", "LS"}
@@ -69,13 +71,25 @@ def parse_session(path: str) -> dict:
     return {"session": sid or Path(path).stem, "cwd": cwd, "start": start, "touches": touches}
 
 
-def index_sessions(store, index, root: str) -> dict:
-    ok = bad = 0
+def index_sessions(store, index, root: str, cache=None) -> dict:
+    """With a cache, only logs that changed since the last run are parsed again (the live one keeps growing,
+    the other thousand don't)."""
+    ok = bad = parsed = 0
     events = []
+    if cache:
+        cache.preload("session")
     for f in session_files(root):
-        try:
-            s = parse_session(f)
-        except (OSError, ValueError):
+        stamp = file_stamp(f) if cache else None
+        s = cache.get("session", f, stamp) if stamp else None
+        if s is None:
+            parsed += 1
+            try:
+                s = parse_session(f)
+            except (OSError, ValueError):
+                s = {"error": True}
+            if stamp:
+                cache.put("session", f, stamp, s)
+        if s.get("error"):
             bad += 1
             continue
         ok += 1
@@ -88,4 +102,4 @@ def index_sessions(store, index, root: str) -> dict:
             if node:
                 events.append((node, ts, kind, weight, "claude_sessions", s["session"]))
     store.add_events(events)
-    return {"ok": ok, "errors": bad, "events": len(events)}
+    return {"ok": ok, "errors": bad, "events": len(events), "parsed": parsed}

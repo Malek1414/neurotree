@@ -2,12 +2,14 @@
 and 'mention' links from notes to the repos they name."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
 from collections import Counter
 from pathlib import Path
 
+from ..cache import file_stamp
 from ..kinds import classify
 from ..privacy import SKIP_DIRS, is_excluded
 
@@ -53,7 +55,8 @@ def folder_project(root: str, path: str, counts: Counter) -> tuple[str | None, s
     return first, parts[0]
 
 
-def index_files(store, roots, repo_roots: set, since_days: int, extra=(), now: float | None = None) -> dict:
+def index_files(store, roots, repo_roots: set, since_days: int, extra=(), now: float | None = None,
+                cache=None) -> dict:
     now = now or time.time()
     docs = walk_documents(roots, set(repo_roots), extra)
     counts = Counter()
@@ -64,6 +67,9 @@ def index_files(store, roots, repo_roots: set, since_days: int, extra=(), now: f
     names = {n["label"].lower(): n["id"] for n in store.nodes("project") if len(n["label"]) >= 4}
     mention = (re.compile(r"\b(" + "|".join(sorted(map(re.escape, names), key=len, reverse=True)) + r")\b", re.I)
                if names else None)
+    names_key = hashlib.sha1("|".join(sorted(names)).encode()).hexdigest()[:12]
+    if cache:
+        cache.preload("mention")
     events, mentions = [], 0
     for root, p in docs:
         folder, label = folder_project(root, p, counts)
@@ -80,12 +86,18 @@ def index_files(store, roots, repo_roots: set, since_days: int, extra=(), now: f
         if now - mtime <= since_days * 86400:
             events.append((fid, mtime, "modified", 0.5, "fs", None))
         if mention and p.lower().endswith((".md", ".txt")):
-            try:
-                with open(p, encoding="utf-8", errors="replace") as fh:
-                    text = fh.read(MENTION_BYTES)
-            except OSError:
-                continue
-            for hit in {m.lower() for m in mention.findall(text)}:
+            stamp = f"{file_stamp(p)}:{names_key}"
+            hits = cache.get("mention", p, stamp) if cache else None
+            if hits is None:  # a note is read again only when it or the set of project names changed
+                try:
+                    with open(p, encoding="utf-8", errors="replace") as fh:
+                        text = fh.read(MENTION_BYTES)
+                except OSError:
+                    continue
+                hits = sorted({m.lower() for m in mention.findall(text)})
+                if cache:
+                    cache.put("mention", p, stamp, hits)
+            for hit in hits:
                 target = names.get(hit)
                 if target and target != pid:
                     store.add_edge(fid, target, "mention")

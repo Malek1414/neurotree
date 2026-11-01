@@ -1,0 +1,12 @@
+{
+  "name": "neurotree",
+  "owner": { "name": "Malek Hassan" },
+  "metadata": { "description": "Neurotree for Claude Code: ask the attention tree of your Mac where the knowledge for a question lives." },
+  "plugins": [
+    {
+      "name": "neurotree",
+      "source": "./",
+      "description": "/neurotree:scan <question>: the projects, files and memory on this Mac that hold the attention for a question, ranked, each with why."
+    }
+  ]
+}

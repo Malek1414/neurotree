@@ -41,7 +41,7 @@ def test_secrets_and_prompts_never_touched(world, monkeypatch):
     run_all(world["settings"], home=world["home"], now=world["now"], log=lambda *_: None)
     monkeypatch.undo()
     assert not [p for p in opened if p.endswith((".env", "credentials.json", "secret-plan.md"))]
-    raw = (world["home"] / "graph.db").read_bytes() + (world["home"] / "graph.json").read_bytes()
+    raw = b"".join((world["home"] / f).read_bytes() for f in ("graph.db", "graph.json", "cache.db"))
     assert b"TOP-SECRET-PROMPT-TEXT" not in raw and b"never read me" not in raw
 
 
