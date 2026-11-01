@@ -1605,9 +1605,12 @@ async function boot(): Promise<void> {
     if (moves[e.key]) { e.preventDefault(); scene.pan(...moves[e.key]) }
   })
 
-  const perf = new URLSearchParams(location.search).has('perf')
-  const fpsEl = perf ? Object.assign(document.createElement('div'), { className: 'fps' }) : null
-  if (fpsEl) document.body.append(fpsEl)
+  const fpsEl = Object.assign(document.createElement('div'), { className: 'fps' })
+  fpsEl.hidden = !new URLSearchParams(location.search).has('perf')
+  document.body.append(fpsEl)
+  window.addEventListener('keydown', (e) => {  // F toggles the frame-rate overlay (no URL bar in the desktop app)
+    if ((e.key === 'f' || e.key === 'F') && (e.target as HTMLElement).tagName !== 'INPUT') fpsEl.hidden = !fpsEl.hidden
+  })
   let frames = 0, fpsAt = performance.now(), last = performance.now()
   const loop = (now: number) => {
     const dt = Math.min(100, now - last)
@@ -1623,7 +1626,7 @@ async function boot(): Promise<void> {
     }
     if (!paused && isIdle(now, lastActive, replay.playing)) { paused = true; scene.graph.pauseAnimation() }
     if (!paused) scene.tick(now, dt)
-    if (fpsEl && ++frames && now - fpsAt >= 1000) { fpsEl.textContent = `${frames} fps · ${scene.graph.graphData().nodes.length} nodes`; frames = 0; fpsAt = now }
+    if (!fpsEl.hidden && ++frames && now - fpsAt >= 1000) { fpsEl.textContent = `${frames} fps · ${scene.graph.graphData().nodes.length} nodes`; frames = 0; fpsAt = now }
     requestAnimationFrame(loop)
   }
   requestAnimationFrame(loop)

@@ -9,7 +9,7 @@
 **Tech Stack:** Rust 1.97, Tauri 2 (`tray-icon`, `image-png`), `notify` 8 (FSEvents), `serde`/`serde_json`, `libc` (`localtime_r` for the menubar clock), `tempfile` (tests); `@tauri-apps/cli` 2 from npm (no `cargo install`); Pillow for the icon art.
 
 ## Global Constraints
-- **Viewer contract (exact):** `tauri.conf.json` has `build.frontendDist = "../../viewer/dist"`, `build.devUrl = "http://localhost:5173"`, window label `main`, title "Neurotree", 1440x900, background `#05060a`.
+- **Viewer contract (exact):** `tauri.conf.json` has `build.frontendDist = "../../viewer/dist"`, `build.devUrl = "http://127.0.0.1:5173"`, window label `main`, title "Neurotree", 1440x900, background `#05060a`.
 - **Commands** (JS: `invoke` from `@tauri-apps/api/core`): `load_graph() -> String` (raw `<data dir>/graph.json`, error string if missing); `status() -> Option<serde_json::Value>` (parsed `status.json` or null); `open_path(path: String)` = `open <path>`; `reveal_path(path: String)` = `open -R <path>` (reject paths that do not exist, run nothing else); `reindex() -> bool` (false if a run is in progress).
 - **Events** (JS: `listen` from `@tauri-apps/api/event`): `"fs-change"` `{ "paths": [String], "source": "fs" | "claude" }`, coalesced, at most one emit per 2 s window; `"index-status"` `{ "running": bool, "finished_at": f64 | null, "error": String | null }` when a run starts and ends.
 - **Data dir:** env `NEUROTREE_HOME`, else `~/Library/Application Support/Neurotree`.
@@ -203,7 +203,7 @@ mod config_contract {
     fn build_points_at_the_viewer() {
         let c = conf();
         assert_eq!(c["build"]["frontendDist"], "../../viewer/dist");
-        assert_eq!(c["build"]["devUrl"], "http://localhost:5173");
+        assert_eq!(c["build"]["devUrl"], "http://127.0.0.1:5173");
     }
 
     #[test]
@@ -233,7 +233,7 @@ Expected: FAIL: the `tauri-build` build script (and `include_str!` in the test) 
   "identifier": "com.malekhassan.neurotree",
   "build": {
     "frontendDist": "../../viewer/dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://127.0.0.1:5173"
   },
   "app": {
     "windows": [
@@ -1819,7 +1819,7 @@ mod config_contract {
     fn build_points_at_the_viewer() {
         let c = conf();
         assert_eq!(c["build"]["frontendDist"], "../../viewer/dist");
-        assert_eq!(c["build"]["devUrl"], "http://localhost:5173");
+        assert_eq!(c["build"]["devUrl"], "http://127.0.0.1:5173");
     }
 
     #[test]
@@ -2184,7 +2184,7 @@ mod config_contract {
     fn build_points_at_the_viewer() {
         let c = conf();
         assert_eq!(c["build"]["frontendDist"], "../../viewer/dist");
-        assert_eq!(c["build"]["devUrl"], "http://localhost:5173");
+        assert_eq!(c["build"]["devUrl"], "http://127.0.0.1:5173");
     }
 
     #[test]
@@ -2237,7 +2237,7 @@ Expected: `app/src-tauri/target/release/bundle/macos/Neurotree.app`. Check `git 
 - [ ] **Step 2: Dev run with the viewer** (two terminals)
 
 ```bash
-npm --prefix viewer run dev            # Vite on http://localhost:5173
+npm --prefix viewer run dev            # Vite on http://127.0.0.1:5173
 cd app && NEUROTREE_REPO=~/Desktop/Neurotree npx tauri dev
 ```
 (`NEUROTREE_REPO` is only needed when the binary was built from a different checkout, e.g. a worktree.)

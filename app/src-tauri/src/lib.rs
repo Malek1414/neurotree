@@ -120,7 +120,7 @@ mod config_contract {
     fn build_points_at_the_viewer() {
         let c = conf();
         assert_eq!(c["build"]["frontendDist"], "../../viewer/dist");
-        assert_eq!(c["build"]["devUrl"], "http://localhost:5173");
+        assert_eq!(c["build"]["devUrl"], "http://127.0.0.1:5173");
     }
 
     #[test]
