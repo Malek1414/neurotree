@@ -1,0 +1,15 @@
+{
+  "name": "neurotree-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Neurotree desktop shell (Tauri 2)",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "npm --prefix ../viewer run build && tauri build --bundles app",
+    "icon": "python3 scripts/make_icon.py && tauri icon icon-source.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
