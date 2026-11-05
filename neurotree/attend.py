@@ -77,6 +77,7 @@ class Index:
     copy_of: dict = field(default_factory=dict)
     vecs: np.ndarray | None = None
     model: object = field(default=None, repr=False)
+    _prior_cache: dict = field(default_factory=dict, repr=False)
 
     def encode(self, text: str) -> np.ndarray | None:
         if self.vecs is None:
@@ -184,14 +185,46 @@ def _rollup(ix: Index, arr: np.ndarray) -> np.ndarray:
 
 
 def _pct(ix: Index, arr: np.ndarray) -> np.ndarray:
-    """Percentile among the positive values of the same level, like scoring.percentile_ranks (a per-level norm)."""
-    out = np.zeros_like(arr, dtype=np.float64)
-    for lvl in np.unique(ix.level):
-        m = ix.level == lvl
-        vals = arr[m]
-        pos = np.sort(vals[vals > 0])
-        if len(pos):
-            out[m] = np.where(vals > 0, np.searchsorted(pos, vals, side="right") / len(pos), 0.0)
+    """Percentile among the positive values of the same level, like scoring.percentile_ranks (a per-level norm).
+
+    One grouped-rank pass instead of a per-level loop: sort the positive values by (level, value) once, then get
+    each one's searchsorted(side='right') rank within its level via a single cumulative scan over the sort order,
+    instead of re-sorting and re-querying per level."""
+    n = len(arr)
+    out = np.zeros(n, dtype=np.float64)
+    idx_pos = np.nonzero(arr > 0)[0]
+    k = len(idx_pos)
+    if not k:
+        return out
+    lvl_pos = ix.level[idx_pos]
+    val_pos = arr[idx_pos]
+    order = np.lexsort((val_pos, lvl_pos))  # ascending value within ascending level
+    lvl_s = lvl_pos[order]
+    val_s = val_pos[order]
+
+    level_change = np.empty(k, dtype=bool)
+    level_change[0] = True
+    level_change[1:] = lvl_s[1:] != lvl_s[:-1]
+    group_start = np.flatnonzero(level_change)
+    group_id = np.cumsum(level_change) - 1
+    counts = np.diff(np.append(group_start, k))[group_id].astype(np.float64)
+
+    value_change = np.empty(k, dtype=bool)
+    value_change[0] = True
+    value_change[1:] = val_s[1:] != val_s[:-1]
+    last_in_run = np.empty(k, dtype=bool)
+    last_in_run[:-1] = level_change[1:] | value_change[1:]
+    last_in_run[-1] = True
+
+    pos_in_group = np.arange(k) - group_start[group_id]
+    unit = k + 2  # > any possible rank (<= k), so group_id dominates the composite order below
+    missing = unit - 1  # a sentinel bigger than any real rank, but still < unit
+    candidate = np.where(last_in_run, pos_in_group + 1, missing)
+    composite = group_id.astype(np.int64) * unit + candidate
+    nearest = np.minimum.accumulate(composite[::-1])[::-1] % unit  # nearest run-end at or after each position
+
+    frac = nearest / counts
+    out[idx_pos[order]] = frac
     return out
 
 
@@ -326,7 +359,11 @@ def attend(ix: Index, query: str, cwd: str | None = None, as_of: float | None = 
     memo = {} if memo is None else memo  # the benchmark reuses priors and head scores across settings
     key = ("prior", as_of, tuple(cfg["scales"]))
     if cfg["prior"] and key not in memo:
-        memo[key] = prior(ix, as_of, cfg["scales"])
+        if key not in ix._prior_cache:  # questions in one run share as_of, so the prior is computed once per run
+            if len(ix._prior_cache) >= 2:  # bounded: a long-lived caller passing the current time adds a key per call
+                ix._prior_cache.pop(next(iter(ix._prior_cache)))
+            ix._prior_cache[key] = prior(ix, as_of, cfg["scales"])
+        memo[key] = ix._prior_cache[key]
     pr = memo[key] if cfg["prior"] else np.zeros(n)
     here = project_of(ix, cwd)
     unit_safe = np.where(ix.unit >= 0, ix.unit, 0)
