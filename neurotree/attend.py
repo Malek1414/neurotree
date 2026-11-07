@@ -5,9 +5,13 @@ a softmax turns its scores into weights, and the heads' weights are mixed. What 
 did not, and the measurements behind each choice: docs/attention.md.
 
   lexical head   BM25 over the node keys (names, path words, first lines, functions, memory titles)
-  semantic head  cosine of static code embeddings; a softmax temperature does the paper's 1/sqrt(d) job
-  bias           added to the logits: the log of the node's prior (what you work on, at several time scales)
-                 and the project you are in. A bias reorders matches; it never brings in a node nothing matched.
+  semantic head  cosine of static code embeddings
+  fusion         reciprocal rank fusion: each head ranks its own top candidates, score = sum 1/(k + rank).
+                 Rank-based instead of averaging raw scores, so lexical and semantic never need calibrating
+                 against each other.
+  bias           added after fusion, in log space: the log of the node's prior (what you work on, at several
+                 time scales) and the project you are in. A bias reorders matches; it never brings in a node
+                 nothing matched.
   graph step     one round of attention along imports and edited-together links, with a residual
 
 Reads graph.db, writes nothing."""
@@ -35,11 +39,12 @@ der die das und ist ich du er sie es wir ihr mit von zu den dem des ein eine ein
 noch auch wie was wenn dann aber oder bei aus nach so mal ja nein bitte mach machen kannst kann soll sollte""".split())
 
 DEFAULT = {
-    "lexical": 1.0, "semantic": 1.0,     # head weights (the paper's W_O, fixed and equal instead of learned)
-    "tau_lex": 0.08, "tau_sem": 0.04,    # softmax temperatures
-    "prior": 1.0, "eps": 0.05,           # logit bias: prior * log(eps + prior)
-    "cwd": 1.5,                          # logit bias for nodes in the project you are in
-    "graph": 0.15, "hops": 1,            # share of attention that flows along edges per round
+    "lexical": 1.0, "semantic": 0.5,     # head weights (the paper's W_O, fixed and equal instead of learned)
+    "tau_lex": 0.08, "tau_sem": 0.04,    # unused by RRF fusion; kept so bench's grid search still has valid keys
+    "rrf_k": 0.1,                        # reciprocal rank fusion constant: score = sum 1/(rrf_k + rank)
+    "prior": 1.5, "eps": 0.1,            # logit bias: prior * log(eps + prior)
+    "cwd": 3.0,                          # logit bias for nodes in the project you are in
+    "graph": 0.3, "hops": 1,             # share of attention that flows along edges per round
     "rel_import": 1.0, "rel_together": 0.0,  # edited-together links measured slightly worse for ranking
     "scales": (1, 7, 30, 120),           # attention half-lives in days (one per "frequency")
     "limit": 400, "seeds": 40, "hub": 40,
@@ -282,9 +287,14 @@ def semantic(ix: Index, qv: np.ndarray | None, limit: int) -> tuple[np.ndarray, 
     return idx, sims[idx].astype(np.float64)
 
 
-def _softmax(x: np.ndarray) -> np.ndarray:
-    e = np.exp(x - x.max())
-    return e / e.sum()
+def _rrf(s: np.ndarray, k: float) -> np.ndarray:
+    """Reciprocal rank fusion score for one head's candidates: 1/(k + rank), rank 1 = the best score.
+
+    Rank-based so a head's contribution depends only on its own ordering, not on the scale of its raw scores -
+    no tau to calibrate one head's scores against the other's."""
+    rank = np.empty(len(s), dtype=np.float64)
+    rank[np.argsort(-s)] = np.arange(1, len(s) + 1, dtype=np.float64)
+    return 1.0 / (k + rank)
 
 
 # ---- the graph step: attention flows along edges ------------------------------------------------------------------
@@ -374,27 +384,28 @@ def attend(ix: Index, query: str, cwd: str | None = None, as_of: float | None = 
     if cfg["lexical"]:
         if ("lex", query) not in memo:
             memo[("lex", query)] = lexical(ix, query, cfg["limit"])
-        heads["lexical"] = (cfg["lexical"], *memo[("lex", query)], cfg["tau_lex"])
+        heads["lexical"] = (cfg["lexical"], *memo[("lex", query)])
     if cfg["semantic"]:
         if ("sem", query) not in memo:
             memo[("sem", query)] = semantic(ix, ix.encode(query) if qv is None else qv, cfg["limit"])
-        heads["semantic"] = (cfg["semantic"], *memo[("sem", query)], cfg["tau_sem"])
+        heads["semantic"] = (cfg["semantic"], *memo[("sem", query)])
     node_mass = np.zeros(n)
     per_head = {}
     total_w = 0.0
-    for name, (w, idx, s, tau) in heads.items():
+    for name, (w, idx, s) in heads.items():
         ok = valid[idx] & (ix.unit[idx] >= 0)
         idx, s = idx[ok], s[ok]
         if not len(idx):
             continue
-        p = _softmax(s / tau + bias[idx])
+        p = w * _rrf(s, cfg["rrf_k"])
         per_head[name] = (idx, p)
-        node_mass[idx] += w * p
+        node_mass[idx] += p
         total_w += w
     if not total_w:
         return {"units": [], "heads": {}, "via": {}, "best": {}, "cwd_project": here, "prior": pr}
-    node_mass /= total_w
     cand = np.nonzero(node_mass)[0]
+    node_mass[cand] *= np.exp(bias[cand])
+    node_mass[cand] /= node_mass[cand].sum()
     mass = defaultdict(float)
     best = {}
     for i in cand:
