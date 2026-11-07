@@ -39,7 +39,7 @@ der die das und ist ich du er sie es wir ihr mit von zu den dem des ein eine ein
 noch auch wie was wenn dann aber oder bei aus nach so mal ja nein bitte mach machen kannst kann soll sollte""".split())
 
 DEFAULT = {
-    "lexical": 1.0, "semantic": 0.5,     # head weights (the paper's W_O, fixed and equal instead of learned)
+    "lexical": 1.0, "semantic": 0.5,     # head weights (the paper's W_O, fixed instead of learned)
     "tau_lex": 0.08, "tau_sem": 0.04,    # unused by RRF fusion; kept so bench's grid search still has valid keys
     "rrf_k": 0.1,                        # reciprocal rank fusion constant: score = sum 1/(rrf_k + rank)
     "prior": 1.5, "eps": 0.1,            # logit bias: prior * log(eps + prior)

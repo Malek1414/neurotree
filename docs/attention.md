@@ -75,6 +75,33 @@ Absolute numbers are modest because the task is hard: a prompt says what you wan
 change, and most misses are the right project with a neighboring file. That is why the plugin shows projects and
 files, and Claude reads around what it points to.
 
+## Improved by heartgold (November 2026)
+
+[heartgold](https://github.com/Malek1414/heartgold) ran on this repo in its metric mode, which raises a measured score
+and keeps only what holds up on unseen data. The inputs were frozen: the index as of 5 Nov, and 110 questions from
+sessions before it. They were split the way bench splits them: whole sessions, the older 60 % to tune on (70
+questions) and the newer 40 % held out (40 questions). Agents only ever saw scores on the tune split
+(`python -m neurotree.evaljson --split tune`). The held-out split prints only for heartgold's own check
+(`HEARTGOLD_HOLDOUT=1`). Any change that made held-out worse was dropped.
+
+| | tune P@1 | tune nDCG@10 | held-out P@1 | held-out nDCG@10 |
+|---|---|---|---|---|
+| before | 0.400 | 0.158 | 0.550 | 0.169 |
+| **after (kept: reciprocal rank fusion)** | **0.457** | **0.189** | **0.600** | **0.195** |
+
+Held-out change, paired bootstrap, 95 %, n = 40: P@1 +0.050 [+0.000, +0.125], nDCG@10 +0.026 [−0.030, +0.080].
+That is a likely gain, not a proven one; the set is small.
+
+- **What changed.** The two heads are combined by reciprocal rank fusion (each head ranks its own candidates,
+  score = Σ 1/(k + rank)) instead of softmax-averaging raw scores. The bias is applied after fusion. Several
+  constants were retuned along with it.
+- **What was tried and dropped.** Eight more ideas over two rounds: a saturating mass rollup, query-shape gating,
+  Rocchio and RM3 query expansion, tuning k, max-dominant aggregation, a calibrated score blend, and a direct
+  project-scoring stage. The project-scoring stage raised tune P@1 to 0.486 but lowered held-out P@1 to 0.575, so it
+  was rejected as overfit. That is the same lesson as the tuning note above.
+- **Cost.** Queries take longer: median 26 → 44 ms, p90 42 → 77 ms, measured on 60 questions, cold memo. The
+  heartgold runs cost $12.34 in agent time.
+
 ## Also fixed along the way
 
 - **Moved projects lost their history.** Projects that moved (e.g. `~/Desktop/simulacrum` → `~/Desktop/Projects/...`)
